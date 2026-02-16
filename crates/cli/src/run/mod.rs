@@ -1,5 +1,5 @@
-use crate::common::{CommonArgs, Config, ConfigModule, ConfigModuleMetadata};
-use anyhow::Context;
+use crate::common::{CargoToml, CommonArgs, Config, ConfigModule, ConfigModuleMetadata};
+use anyhow::{Context, bail};
 use cargo_metadata::{Package, Target};
 use clap::Args;
 use std::collections::HashMap;
@@ -21,7 +21,39 @@ pub struct RunArgs {
 
 impl RunArgs {
     pub fn run(&self) -> anyhow::Result<()> {
-        let mut config = get_config(&self.common_args.config)?;
+        let config = self.get_config()?;
+        let cargo_toml = self.create_cargo_toml(config)?;
+
+        println!("cargo toml created:\n{cargo_toml}");
+
+        Ok(())
+    }
+
+    fn create_cargo_toml(&self, config: Config) -> anyhow::Result<String> {
+        let mut dependencies = HashMap::with_capacity(config.modules.len());
+        for (name, module) in config.modules.into_iter() {
+            let Some(package) = module.metadata.package.clone() else {
+                bail!("module '{name}' doesn't have package associated, please review");
+            };
+            dependencies.insert(package.replace("-", "_"), module.metadata);
+        }
+        dependencies.insert(
+            "cf_modkit".to_owned(),
+            ConfigModuleMetadata {
+                package: Some("cf-modkit".to_owned()),
+                features: vec!["bootstrap".to_owned()],
+                ..Default::default()
+            },
+        );
+        toml::to_string(&CargoToml {
+            dependencies,
+            ..Default::default()
+        })
+        .context("something went wrong when transforming to toml")
+    }
+
+    fn get_config(&self) -> anyhow::Result<Config> {
+        let mut config = get_config_from_path(&self.common_args.config)?;
         let res = cargo_metadata::MetadataCommand::new()
             .current_dir(&self.path)
             .no_deps()
@@ -49,12 +81,12 @@ impl RunArgs {
             }
         });
 
-        Ok(())
+        Ok(config)
     }
 }
 
-fn get_config(path_buf: &PathBuf) -> anyhow::Result<Config> {
-    let config = fs::File::open(path_buf).context("config not available")?;
+fn get_config_from_path(path: &PathBuf) -> anyhow::Result<Config> {
+    let config = fs::File::open(path).context("config not available")?;
     serde_saphyr::from_reader(config).context("config not valid")
 }
 
