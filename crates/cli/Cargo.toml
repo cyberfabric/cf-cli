@@ -13,4 +13,9 @@ publish = false
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 cargo-generate = { workspace = true }
+cargo_metadata = { workspace = true }
+
+serde = { workspace = true }
 serde-saphyr = { workspace = true }
+
+syn = { workspace = true }
