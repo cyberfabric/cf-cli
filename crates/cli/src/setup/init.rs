@@ -1,16 +1,12 @@
 use anyhow::{Context, bail};
 use cargo_generate::{GenerateArgs, TemplatePath, generate};
 use clap::Args;
-use std::fs;
 use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct InitArgs {
     /// Path to initialize the project
     path: PathBuf,
-    /// Force initialization even if the directory is not empty
-    #[arg(short = 'c', long)]
-    force: bool,
     /// Verbose output
     #[arg(short = 'v', long)]
     verbose: bool,
@@ -22,7 +18,7 @@ impl InitArgs {
             bail!("path is not a directory");
         }
         if !self.path.exists() {
-            fs::create_dir_all(&self.path).context("path can't be created")?;
+            std::fs::create_dir_all(&self.path).context("path can't be created")?;
         }
         let name = self
             .path
@@ -43,8 +39,8 @@ impl InitArgs {
                 favorite: None,
             },
             destination: Some(self.path.clone()),
-            overwrite: self.force,
-            init: self.force,
+            overwrite: false,
+            init: true,
             name: Some(name.to_owned()),
             quiet: !self.verbose,
             verbose: self.verbose,
