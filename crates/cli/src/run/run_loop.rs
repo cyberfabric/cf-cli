@@ -1,17 +1,29 @@
 use super::templates::{CARGO_CONFIG_TOML, CARGO_SERVER_MAIN, prepare_cargo_server_main};
-use anyhow::Context;
+use anyhow::{Context, bail};
 use module_parser::{CargoToml, Config, ConfigModuleMetadata, get_module_name_from_crate};
-use notify::{Event, RecursiveMode, Watcher};
-use std::collections::HashMap;
+use notify::{RecursiveMode, Watcher};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc;
+use std::time::Duration;
+
+enum RunSignal {
+    Rerun,
+    Stop,
+}
 
 pub(super) struct RunLoop {
     path: PathBuf,
     config_path: PathBuf,
 }
+
+const BASE_PATH: &str = ".cyberfabric";
+
+pub(super) static OTEL: AtomicBool = AtomicBool::new(false);
 
 impl RunLoop {
     pub(super) fn new(path: PathBuf, config_path: PathBuf) -> Self {
@@ -22,28 +34,173 @@ impl RunLoop {
         let dependencies = get_config(&self.path, &self.config_path)?.create_dependencies()?;
         generate_server_structure(&self.path, &self.config_path, &dependencies)?;
 
-        let dependencies = Arc::new(RwLock::new(dependencies));
-        let mut wait_for = vec![];
-        let (tx, rx) = std::sync::mpsc::channel::<notify::Result<Event>>();
-        if watch {
-            let mut watcher =
-                notify::recommended_watcher(tx.clone()).context("can't create watcher")?;
-            watcher
-                .watch(&self.config_path, RecursiveMode::NonRecursive)
-                .context("can't watch path")?;
-            wait_for.push(std::thread::spawn(
-                move || {
-                    while let Ok(Ok(event)) = rx.recv() {}
-                },
-            ))
+        let cargo_dir = self.path.join(BASE_PATH);
+
+        if !watch {
+            let status = cargo_run(&cargo_dir)
+                .status()
+                .context("failed to run cargo")?;
+            if !status.success() {
+                bail!("cargo run exited with {status}");
+            }
+            return Ok(());
         }
 
-        for w in wait_for {
-            w.join().expect("can't join thread");
+        // -- watch mode --
+
+        let (signal_tx, signal_rx) = mpsc::channel::<RunSignal>();
+
+        // Spawn cargo-run loop in a dedicated thread
+        let cargo_dir_clone = cargo_dir.clone();
+        let runner_handle = std::thread::spawn(move || {
+            cargo_run_loop(&cargo_dir_clone, &signal_rx);
+        });
+
+        // File-system watcher
+        let (fs_tx, fs_rx) = mpsc::channel();
+        let mut watcher =
+            notify::recommended_watcher(fs_tx).context("failed to create file watcher")?;
+
+        // Watch the config file itself
+        watcher
+            .watch(&self.config_path, RecursiveMode::NonRecursive)
+            .context("failed to watch config file")?;
+
+        // Watch dependency paths that have `path` set
+        let mut watched_paths = watch_dependency_paths(&dependencies, &mut watcher, &self.path);
+        let mut current_deps = dependencies;
+
+        // Event loop - runs until the watcher channel closes
+        while let Ok(Ok(event)) = fs_rx.recv() {
+            let is_config_change = event.paths.contains(&self.config_path);
+
+            if is_config_change {
+                match get_config(&self.path, &self.config_path)
+                    .and_then(|c| c.create_dependencies())
+                {
+                    Ok(new_deps) => {
+                        if new_deps != current_deps {
+                            if let Err(e) =
+                                generate_server_structure(&self.path, &self.config_path, &new_deps)
+                            {
+                                eprintln!("failed to regenerate server structure: {e}");
+                            }
+
+                            // Reconcile watched dependency paths
+                            let new_watched = collect_dep_paths(&new_deps, &self.path);
+                            for old in watched_paths.difference(&new_watched) {
+                                let _ = watcher.unwatch(old);
+                            }
+                            for new_p in new_watched.difference(&watched_paths) {
+                                let _ = watcher.watch(new_p, RecursiveMode::Recursive);
+                            }
+                            watched_paths = new_watched;
+                            current_deps = new_deps;
+                        }
+                        let _ = signal_tx.send(RunSignal::Rerun);
+                    }
+                    Err(e) => eprintln!("failed to reload config: {e}"),
+                }
+            } else {
+                // A watched dependency path changed
+                let _ = signal_tx.send(RunSignal::Rerun);
+            }
         }
+
+        // Watcher channel closed - shut down the runner
+        let _ = signal_tx.send(RunSignal::Stop);
+        runner_handle.join().expect("runner thread panicked");
 
         Ok(())
     }
+}
+
+fn cargo_run(path: &Path) -> Command {
+    let otel = OTEL.load(std::sync::atomic::Ordering::Relaxed);
+    let cargo = std::env::var("CARGO").unwrap_or("cargo".to_owned());
+    let mut cmd = Command::new(cargo);
+    cmd.arg("run");
+    if otel {
+        cmd.arg("-F").arg("otel");
+    }
+    cmd.current_dir(path);
+    cmd
+}
+
+fn cargo_run_loop(cargo_dir: &PathBuf, signal_rx: &mpsc::Receiver<RunSignal>) {
+    'outer: loop {
+        let mut child = match cargo_run(cargo_dir).spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                eprintln!("failed to spawn cargo run: {e}");
+                match signal_rx.recv() {
+                    Ok(RunSignal::Rerun) => continue 'outer,
+                    _ => return,
+                }
+            }
+        };
+
+        let rerun = loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break false,
+                Ok(None) => {}
+                Err(e) => {
+                    eprintln!("error checking child status: {e}");
+                    break false;
+                }
+            }
+
+            match signal_rx.try_recv() {
+                Ok(RunSignal::Rerun) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break true;
+                }
+                Ok(RunSignal::Stop) | Err(mpsc::TryRecvError::Disconnected) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+
+            std::thread::sleep(Duration::from_millis(100));
+        };
+
+        if rerun {
+            continue 'outer;
+        }
+
+        // Child exited on its own, wait for a signal before restarting
+        match signal_rx.recv() {
+            Ok(RunSignal::Rerun) => continue 'outer,
+            _ => return,
+        }
+    }
+}
+
+fn collect_dep_paths(
+    deps: &HashMap<String, ConfigModuleMetadata>,
+    base_path: &Path,
+) -> HashSet<PathBuf> {
+    deps.values()
+        .filter_map(|d| d.path.as_ref())
+        .map(|p| base_path.join(p))
+        .collect()
+}
+
+fn watch_dependency_paths(
+    deps: &HashMap<String, ConfigModuleMetadata>,
+    watcher: &mut impl Watcher,
+    base_path: &Path,
+) -> HashSet<PathBuf> {
+    let paths = collect_dep_paths(deps, base_path);
+    for p in &paths {
+        if let Err(e) = watcher.watch(p, RecursiveMode::Recursive) {
+            eprintln!("failed to watch {}: {e}", p.display());
+        }
+    }
+    paths
 }
 
 fn get_config(path: &PathBuf, config_path: &PathBuf) -> anyhow::Result<Config> {
@@ -152,7 +309,6 @@ fn create_file_structure(
     relative_path: &str,
     contents: &str,
 ) -> anyhow::Result<()> {
-    const BASE_PATH: &str = ".cyberfabric";
     let path = PathBuf::from(path).join(BASE_PATH).join(relative_path);
     fs::create_dir_all(path.parent().unwrap()).context("can't create directory")?;
     let mut file = fs::OpenOptions::new()

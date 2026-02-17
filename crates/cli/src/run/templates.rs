@@ -1,6 +1,6 @@
 use module_parser::ConfigModuleMetadata;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 
 pub(super) const CARGO_CONFIG_TOML: &str = r#"[build]
 target-dir = "../target"
@@ -10,7 +10,7 @@ build-dir = "../target"
 pub(super) const CARGO_SERVER_MAIN: &str = r#"
 use anyhow::Result;
 use modkit::bootstrap::{
-    AppConfig, host::init_logging_unified, run_migrate, run_server,
+    AppConfig, host::init_logging_unified, /* run_migrate, */ run_server,
 };
 {{dependencies}}
 
@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
 }"#;
 
 pub(super) fn prepare_cargo_server_main(
-    config_path: &PathBuf,
+    config_path: &Path,
     dependencies: &HashMap<String, ConfigModuleMetadata>,
 ) -> liquid::Object {
     let dependencies = dependencies

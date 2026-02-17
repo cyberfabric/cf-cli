@@ -26,7 +26,7 @@ pub struct ConfigModule {
     pub metadata: ConfigModuleMetadata,
 }
 
-#[derive(Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ConfigModuleMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub package: Option<String>,

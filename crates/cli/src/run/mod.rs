@@ -4,8 +4,6 @@ mod templates;
 use crate::common::CommonArgs;
 use anyhow::Context;
 use clap::Args;
-use notify::Watcher;
-use std::io::Write;
 use std::path::PathBuf;
 
 #[derive(Args)]
@@ -16,6 +14,9 @@ pub struct RunArgs {
     /// Watch for changes
     #[arg(short = 'w', long)]
     watch: bool,
+    /// Watch for changes
+    #[arg(long)]
+    otel: bool,
     /// Not supported yet
     #[arg(short = 'r', long, hide = true)]
     release: bool,
@@ -37,6 +38,7 @@ impl RunArgs {
             .context("can't canonicalize path")?;
 
         let rl = run_loop::RunLoop::new(path, config_path);
+        run_loop::OTEL.store(self.otel, std::sync::atomic::Ordering::Relaxed);
 
         rl.run(self.watch)
     }
