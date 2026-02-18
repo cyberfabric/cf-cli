@@ -61,10 +61,17 @@ impl RunLoop {
         let mut watcher =
             notify::recommended_watcher(fs_tx).context("failed to create file watcher")?;
 
-        // Watch the config file itself
+        // On Linux and other systems using inotify, when editors perform atomic saves
+        // (write to temporary file, then rename), the rename event is reported at the directory level,
+        // not the file level. File-level watches can therefore miss these events and fail to detect config changes.
+        // Watching the parent directory is the documented best practice.
+        let config_parent = self
+            .config_path
+            .parent()
+            .context("config path has no parent directory")?;
         watcher
-            .watch(&self.config_path, RecursiveMode::NonRecursive)
-            .context("failed to watch config file")?;
+            .watch(config_parent, RecursiveMode::NonRecursive)
+            .context("failed to watch config directory")?;
 
         // Watch dependency paths that have `path` set
         let mut watched_paths = watch_dependency_paths(&dependencies, &mut watcher, &self.path);
