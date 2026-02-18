@@ -134,7 +134,7 @@ fn cargo_run(path: &Path) -> Command {
     cmd
 }
 
-fn cargo_run_loop(cargo_dir: &PathBuf, signal_rx: &mpsc::Receiver<RunSignal>) {
+fn cargo_run_loop(cargo_dir: &Path, signal_rx: &mpsc::Receiver<RunSignal>) {
     'outer: loop {
         let mut child = match cargo_run(cargo_dir).spawn() {
             Ok(child) => child,
@@ -312,7 +312,12 @@ fn generate_server_structure(
 
 fn create_file_structure(path: &Path, relative_path: &str, contents: &str) -> anyhow::Result<()> {
     let path = PathBuf::from(path).join(BASE_PATH).join(relative_path);
-    fs::create_dir_all(path.parent().unwrap()).context("can't create directory")?;
+    fs::create_dir_all(
+        path.parent().context(
+            "this should be unreacheable, the parent for the file structure always exists",
+        )?,
+    )
+    .context("can't create directory")?;
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create(true)

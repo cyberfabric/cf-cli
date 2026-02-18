@@ -357,7 +357,6 @@ dependencies = [
  "liquid",
  "module-parser",
  "notify",
- "serde",
  "serde-saphyr",
  "toml",
 ]

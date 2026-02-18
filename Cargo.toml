@@ -29,3 +29,6 @@ toml = { version = "0.9.8", features = ["serde"] }
 notify = { version = "8.2.0", features = ["serde"] }
 
 syn = { version = "2.0.116", features = ["full"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

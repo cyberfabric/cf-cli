@@ -19,6 +19,8 @@ liquid = { workspace = true }
 module-parser = { workspace = true }
 notify = { workspace = true }
 
-serde = { workspace = true }
 serde-saphyr = { workspace = true }
 toml = { workspace = true }
+
+[lints]
+workspace = true
