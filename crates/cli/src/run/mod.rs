@@ -14,7 +14,7 @@ pub struct RunArgs {
     /// Watch for changes
     #[arg(short = 'w', long)]
     watch: bool,
-    /// Watch for changes
+    /// Use OpenTelemetry tracing while running the project
     #[arg(long)]
     otel: bool,
     /// Not supported yet

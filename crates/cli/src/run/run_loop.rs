@@ -71,7 +71,14 @@ impl RunLoop {
         let mut current_deps = dependencies;
 
         // Event loop - runs until the watcher channel closes
-        while let Ok(Ok(event)) = fs_rx.recv() {
+        while let Ok(res_event) = fs_rx.recv() {
+            let event = match res_event {
+                Ok(event) => event,
+                Err(err) => {
+                    eprintln!("file watcher error: {err}");
+                    continue;
+                }
+            };
             let is_config_change = event.paths.contains(&self.config_path);
 
             if is_config_change {
@@ -276,11 +283,10 @@ fn insert_required_deps(
 }
 
 fn generate_server_structure(
-    path: &PathBuf,
-    config_path: &PathBuf,
+    path: &Path,
+    config_path: &Path,
     dependencies: &HashMap<String, ConfigModuleMetadata>,
 ) -> anyhow::Result<()> {
-    // let dependencies = get_config(path, config_path)?.create_dependencies()?;
     let features = create_features();
 
     let cargo_toml = toml::to_string(&CargoToml {
@@ -298,17 +304,13 @@ fn generate_server_structure(
     create_file_structure(
         path,
         "src/main.rs",
-        &main_template.render(&prepare_cargo_server_main(&config_path, dependencies))?,
+        &main_template.render(&prepare_cargo_server_main(config_path, dependencies))?,
     )?;
 
     Ok(())
 }
 
-fn create_file_structure(
-    path: &PathBuf,
-    relative_path: &str,
-    contents: &str,
-) -> anyhow::Result<()> {
+fn create_file_structure(path: &Path, relative_path: &str, contents: &str) -> anyhow::Result<()> {
     let path = PathBuf::from(path).join(BASE_PATH).join(relative_path);
     fs::create_dir_all(path.parent().unwrap()).context("can't create directory")?;
     let mut file = fs::OpenOptions::new()

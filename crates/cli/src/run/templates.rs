@@ -54,6 +54,7 @@ async fn main() -> Result<()> {
     run_server(config).await
 }"#;
 
+/// UNC paths are not supported like `\\server\share`, as we replace backslashes with forward slashes.
 pub(super) fn prepare_cargo_server_main(
     config_path: &Path,
     dependencies: &HashMap<String, ConfigModuleMetadata>,
@@ -62,9 +63,10 @@ pub(super) fn prepare_cargo_server_main(
         .keys()
         .map(|name| format!("use {name} as _;\n"))
         .collect::<String>();
+    let config_path = config_path.display().to_string().replace('\\', "/");
 
     liquid::object!({
         "dependencies": dependencies,
-        "config_path": config_path.display().to_string(),
+        "config_path": config_path,
     })
 }

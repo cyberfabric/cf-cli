@@ -14,7 +14,11 @@ impl Config {
             let Some(package) = module.metadata.package.clone() else {
                 bail!("module '{name}' doesn't have package associated, please review");
             };
-            dependencies.insert(package.replace("-", "_"), module.metadata);
+            let package = package.replace("-", "_");
+            if dependencies.contains_key(&package) {
+                bail!("module '{name}' has duplicate package name '{package}'");
+            }
+            dependencies.insert(package, module.metadata);
         }
 
         Ok(dependencies)

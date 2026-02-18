@@ -17,6 +17,9 @@ pub(crate) fn retrieve_module_rs(
     let content = fs::read_to_string(&module_rs)
         .with_context(|| format!("can't read module from {}", module_rs.display()))?;
     let ast = syn::parse_file(&content)?;
+    let crate_root = PathBuf::from(&package.manifest_path)
+        .parent()
+        .map(|p| p.display().to_string());
 
     for item in ast.items {
         if let Item::Struct(struct_item) = item
@@ -27,7 +30,7 @@ pub(crate) fn retrieve_module_rs(
                     package: Some(package.name.to_string()),
                     version: Some(package.version.to_string()),
                     features: vec![],
-                    path: src.parent().map(|s| s.display().to_string()),
+                    path: crate_root,
                     deps: module_info.deps,
                 },
             };
