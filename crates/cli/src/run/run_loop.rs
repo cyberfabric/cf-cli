@@ -11,7 +11,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::time::Duration;
 
-enum RunSignal {
+pub(super) enum RunSignal {
     Rerun,
     Stop,
 }
@@ -30,7 +30,7 @@ impl RunLoop {
         Self { path, config_path }
     }
 
-    pub(super) fn run(&self, watch: bool) -> anyhow::Result<()> {
+    pub(super) fn run(&self, watch: bool) -> anyhow::Result<RunSignal> {
         let dependencies = get_config(&self.path, &self.config_path)?.create_dependencies()?;
         generate_server_structure(&self.path, &self.config_path, &dependencies)?;
 
@@ -43,7 +43,7 @@ impl RunLoop {
             if !status.success() {
                 bail!("cargo run exited with {status}");
             }
-            return Ok(());
+            return Ok(RunSignal::Stop);
         }
 
         // -- watch mode --
@@ -79,7 +79,13 @@ impl RunLoop {
                     continue;
                 }
             };
-            let is_config_change = event.paths.contains(&self.config_path);
+            let is_config_change = event.paths.contains(&self.config_path)
+                && matches!(
+                    event.kind,
+                    notify::EventKind::Modify(_)
+                        | notify::EventKind::Create(_)
+                        | notify::EventKind::Remove(_)
+                );
 
             if is_config_change {
                 match get_config(&self.path, &self.config_path)
@@ -91,34 +97,45 @@ impl RunLoop {
                                 generate_server_structure(&self.path, &self.config_path, &new_deps)
                             {
                                 eprintln!("failed to regenerate server structure: {e}");
+                            } else {
+                                // Reconcile watched dependency paths
+                                let new_watched = collect_dep_paths(&new_deps, &self.path);
+                                for old in watched_paths.difference(&new_watched) {
+                                    if let Err(err) = watcher.unwatch(old) {
+                                        eprintln!("failed to unwatch {old:?}: {err}");
+                                        _ = signal_tx.send(RunSignal::Stop);
+                                        runner_handle.join().expect("runner thread panicked");
+                                        return Ok(RunSignal::Rerun);
+                                    }
+                                }
+                                for new_p in new_watched.difference(&watched_paths) {
+                                    if let Err(err) = watcher.watch(new_p, RecursiveMode::Recursive)
+                                    {
+                                        eprintln!("failed to watch {new_p:?}: {err}");
+                                        _ = signal_tx.send(RunSignal::Stop);
+                                        runner_handle.join().expect("runner thread panicked");
+                                        return Ok(RunSignal::Rerun);
+                                    }
+                                }
+                                watched_paths = new_watched;
+                                current_deps = new_deps;
                             }
-
-                            // Reconcile watched dependency paths
-                            let new_watched = collect_dep_paths(&new_deps, &self.path);
-                            for old in watched_paths.difference(&new_watched) {
-                                let _ = watcher.unwatch(old);
-                            }
-                            for new_p in new_watched.difference(&watched_paths) {
-                                let _ = watcher.watch(new_p, RecursiveMode::Recursive);
-                            }
-                            watched_paths = new_watched;
-                            current_deps = new_deps;
                         }
-                        let _ = signal_tx.send(RunSignal::Rerun);
+                        _ = signal_tx.send(RunSignal::Rerun);
                     }
                     Err(e) => eprintln!("failed to reload config: {e}"),
                 }
             } else {
                 // A watched dependency path changed
-                let _ = signal_tx.send(RunSignal::Rerun);
+                _ = signal_tx.send(RunSignal::Rerun);
             }
         }
 
         // Watcher channel closed - shut down the runner
-        let _ = signal_tx.send(RunSignal::Stop);
+        _ = signal_tx.send(RunSignal::Stop);
         runner_handle.join().expect("runner thread panicked");
 
-        Ok(())
+        Ok(RunSignal::Stop)
     }
 }
 

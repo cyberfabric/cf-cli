@@ -2,6 +2,7 @@ mod run_loop;
 mod templates;
 
 use crate::common::CommonArgs;
+use crate::run::run_loop::RunSignal;
 use anyhow::Context;
 use clap::Args;
 use std::path::PathBuf;
@@ -40,6 +41,11 @@ impl RunArgs {
         let rl = run_loop::RunLoop::new(path, config_path);
         run_loop::OTEL.store(self.otel, std::sync::atomic::Ordering::Relaxed);
 
-        rl.run(self.watch)
+        loop {
+            match rl.run(self.watch)? {
+                RunSignal::Rerun => continue,
+                RunSignal::Stop => break Ok(()),
+            }
+        }
     }
 }
