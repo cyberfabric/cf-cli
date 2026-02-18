@@ -1,0 +1,15 @@
+[package]
+name = "module-parser"
+version.workspace = true
+license-file.workspace = true
+authors.workspace = true
+repository.workspace = true
+description.workspace = true
+edition.workspace = true
+readme.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+cargo_metadata = { workspace = true }
+serde = { workspace = true }
+syn = { workspace = true }
