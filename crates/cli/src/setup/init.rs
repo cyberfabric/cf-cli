@@ -10,6 +10,20 @@ pub struct InitArgs {
     /// Verbose output
     #[arg(short = 'v', long)]
     verbose: bool,
+    #[arg(long = "local-path", conflicts_with_all = ["git", "subfolder", "branch"])]
+    local_path: Option<String>,
+    /// url to the git repo
+    #[arg(
+        long,
+        default_value = "https://github.com/cyberfabric/cf-template-rust"
+    )]
+    git: Option<String>,
+    /// Subfolder relative to the git repo
+    #[arg(long, default_value = "Init")]
+    subfolder: Option<String>,
+    /// Branch of the git repo
+    #[arg(long, default_value = "main")]
+    branch: Option<String>,
 }
 
 impl InitArgs {
@@ -26,13 +40,22 @@ impl InitArgs {
             .context("path is strange")?
             .to_str()
             .context("name is strange")?;
+        let (git, subfolder, branch) = if self.local_path.is_some() {
+            (None, None, None)
+        } else {
+            (
+                self.git.clone(),
+                self.subfolder.clone(),
+                self.branch.clone(),
+            )
+        };
         generate(GenerateArgs {
             template_path: TemplatePath {
                 auto_path: None,
-                git: Some("https://github.com/Bechma/cf-template-rust".to_owned()),
-                path: None,
-                subfolder: Some("Init".to_owned()),
-                branch: Some("setup".to_owned()),
+                git,
+                path: self.local_path.clone(),
+                subfolder,
+                branch,
                 tag: None,
                 test: false,
                 revision: None,
