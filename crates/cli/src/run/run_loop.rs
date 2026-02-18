@@ -183,8 +183,23 @@ fn cargo_run_loop(cargo_dir: &Path, signal_rx: &mpsc::Receiver<RunSignal>) {
 
             match signal_rx.try_recv() {
                 Ok(RunSignal::Rerun) => {
+                    // Drain extra reruns; honor a queued Stop.
+                    let mut stop = false;
+                    loop {
+                        match signal_rx.try_recv() {
+                            Ok(RunSignal::Rerun) => continue,
+                            Ok(RunSignal::Stop) | Err(mpsc::TryRecvError::Disconnected) => {
+                                stop = true;
+                                break;
+                            }
+                            Err(mpsc::TryRecvError::Empty) => break,
+                        }
+                    }
                     let _ = child.kill();
                     let _ = child.wait();
+                    if stop {
+                        return;
+                    }
                     break true;
                 }
                 Ok(RunSignal::Stop) | Err(mpsc::TryRecvError::Disconnected) => {
