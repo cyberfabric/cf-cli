@@ -47,11 +47,7 @@ async fn main() -> Result<()> {
     // Build OpenTelemetry layer before logging
     // Convert TracingConfig from modkit::bootstrap to modkit's type (they have identical structure)
     #[cfg(feature = "otel")]
-    let modkit_tracing_config: Option<modkit::telemetry::TracingConfig> = config
-        .tracing
-        .as_ref()
-        .and_then(|tc| serde_json::to_value(tc).ok())
-        .and_then(|v| serde_json::from_value(v).ok());
+    let modkit_tracing_config: Option<modkit::telemetry::TracingConfig> = config.tracing.clone();
     #[cfg(feature = "otel")]
     let otel_layer = if let Some(tc) = modkit_tracing_config.as_ref()
         && tc.enabled
@@ -101,6 +97,11 @@ pub fn get_config(path: &Path, config_path: &Path) -> anyhow::Result<Config> {
     config.modules.iter_mut().for_each(|module| {
         if let Some(module_metadata) = members.remove(module.0.as_str()) {
             module.1.metadata = module_metadata.metadata;
+        } else {
+            eprintln!(
+                "warning: config module '{}' has no matching workspace member; metadata will not be merged",
+                module.0
+            );
         }
     });
 
@@ -155,14 +156,6 @@ fn insert_required_deps(
             ..Default::default()
         },
     );
-    dependencies.insert(
-        "serde_json".to_owned(),
-        ConfigModuleMetadata {
-            package: Some("serde_json".to_owned()),
-            version: Some("1".to_owned()),
-            ..Default::default()
-        },
-    );
     dependencies
 }
 
@@ -198,7 +191,7 @@ fn create_file_structure(path: &Path, relative_path: &str, contents: &str) -> an
     let path = PathBuf::from(path).join(BASE_PATH).join(relative_path);
     fs::create_dir_all(
         path.parent().context(
-            "this should be unreacheable, the parent for the file structure always exists",
+            "this should be unreachable, the parent for the file structure always exists",
         )?,
     )
     .context("can't create directory")?;
