@@ -1,19 +1,11 @@
-use crate::common::{self, CommonArgs};
+use crate::common::{self, BuildRunArgs, CommonArgs};
 use anyhow::{Context, bail};
 use clap::Args;
-use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct BuildArgs {
-    /// Path to the module to build
-    #[arg(short = 'p', long, default_value = ".")]
-    path: PathBuf,
-    /// Build in release mode
-    #[arg(short = 'r', long)]
-    release: bool,
-    /// Build with OpenTelemetry support
-    #[arg(long)]
-    otel: bool,
+    #[command(flatten)]
+    build_run_args: BuildRunArgs,
     #[command(flatten)]
     common_args: CommonArgs,
 }
@@ -21,6 +13,7 @@ pub struct BuildArgs {
 impl BuildArgs {
     pub fn run(&self) -> anyhow::Result<()> {
         let path = self
+            .build_run_args
             .path
             .canonicalize()
             .context("can't canonicalize workspace")?;
@@ -35,9 +28,14 @@ impl BuildArgs {
         common::generate_server_structure(&path, &config_path, &dependencies)?;
 
         let cargo_dir = path.join(common::BASE_PATH);
-        let status = common::cargo_command("build", &cargo_dir, self.otel, self.release)
-            .status()
-            .context("failed to run cargo build")?;
+        let status = common::cargo_command(
+            "build",
+            &cargo_dir,
+            self.build_run_args.otel,
+            self.build_run_args.release,
+        )
+        .status()
+        .context("failed to run cargo build")?;
 
         if !status.success() {
             bail!("cargo build exited with {status}");

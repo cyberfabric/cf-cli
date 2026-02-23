@@ -13,6 +13,19 @@ pub struct CommonArgs {
     pub config: PathBuf,
 }
 
+#[derive(Args)]
+pub struct BuildRunArgs {
+    /// Path to the module
+    #[arg(short = 'p', long, default_value = ".")]
+    pub path: PathBuf,
+    /// Use OpenTelemetry tracing
+    #[arg(long)]
+    pub otel: bool,
+    /// Build/run in release mode
+    #[arg(short = 'r', long)]
+    pub release: bool,
+}
+
 pub const BASE_PATH: &str = ".cyberfabric";
 
 const CARGO_CONFIG_TOML: &str = r#"[build]
