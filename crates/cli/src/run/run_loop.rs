@@ -1,10 +1,8 @@
-use super::templates::{CARGO_CONFIG_TOML, CARGO_SERVER_MAIN, prepare_cargo_server_main};
+use crate::common;
 use anyhow::{Context, bail};
-use module_parser::{CargoToml, Config, ConfigModuleMetadata, get_module_name_from_crate};
+use module_parser::ConfigModuleMetadata;
 use notify::{RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
@@ -21,9 +19,8 @@ pub(super) struct RunLoop {
     config_path: PathBuf,
 }
 
-const BASE_PATH: &str = ".cyberfabric";
-
 pub(super) static OTEL: AtomicBool = AtomicBool::new(false);
+pub(super) static RELEASE: AtomicBool = AtomicBool::new(false);
 
 impl RunLoop {
     pub(super) fn new(path: PathBuf, config_path: PathBuf) -> Self {
@@ -31,10 +28,11 @@ impl RunLoop {
     }
 
     pub(super) fn run(&self, watch: bool) -> anyhow::Result<RunSignal> {
-        let dependencies = get_config(&self.path, &self.config_path)?.create_dependencies()?;
-        generate_server_structure(&self.path, &self.config_path, &dependencies)?;
+        let dependencies =
+            common::get_config(&self.path, &self.config_path)?.create_dependencies()?;
+        common::generate_server_structure(&self.path, &self.config_path, &dependencies)?;
 
-        let cargo_dir = self.path.join(BASE_PATH);
+        let cargo_dir = self.path.join(common::BASE_PATH);
 
         if !watch {
             let status = cargo_run(&cargo_dir)
@@ -95,14 +93,16 @@ impl RunLoop {
                 );
 
             if is_config_change {
-                match get_config(&self.path, &self.config_path)
+                match common::get_config(&self.path, &self.config_path)
                     .and_then(|c| c.create_dependencies())
                 {
                     Ok(new_deps) => {
                         if new_deps != current_deps {
-                            if let Err(e) =
-                                generate_server_structure(&self.path, &self.config_path, &new_deps)
-                            {
+                            if let Err(e) = common::generate_server_structure(
+                                &self.path,
+                                &self.config_path,
+                                &new_deps,
+                            ) {
                                 eprintln!("failed to regenerate server structure: {e}");
                             } else {
                                 // Reconcile watched dependency paths
@@ -148,14 +148,8 @@ impl RunLoop {
 
 fn cargo_run(path: &Path) -> Command {
     let otel = OTEL.load(std::sync::atomic::Ordering::Relaxed);
-    let cargo = std::env::var("CARGO").unwrap_or("cargo".to_owned());
-    let mut cmd = Command::new(cargo);
-    cmd.arg("run");
-    if otel {
-        cmd.arg("-F").arg("otel");
-    }
-    cmd.current_dir(path);
-    cmd
+    let release = RELEASE.load(std::sync::atomic::Ordering::Relaxed);
+    common::cargo_command("run", path, otel, release)
 }
 
 fn cargo_run_loop(cargo_dir: &Path, signal_rx: &mpsc::Receiver<RunSignal>) {
@@ -247,122 +241,4 @@ fn watch_dependency_paths(
         }
     }
     paths
-}
-
-fn get_config(path: &PathBuf, config_path: &PathBuf) -> anyhow::Result<Config> {
-    let mut config = get_config_from_path(config_path)?;
-    let mut members = get_module_name_from_crate(path)?;
-
-    config.modules.iter_mut().for_each(|module| {
-        if let Some(module_metadata) = members.remove(module.0.as_str()) {
-            module.1.metadata = module_metadata.metadata;
-        }
-    });
-
-    Ok(config)
-}
-
-fn get_config_from_path(path: &PathBuf) -> anyhow::Result<Config> {
-    let config = fs::File::open(path).context("config not available")?;
-    serde_saphyr::from_reader(config).context("config not valid")
-}
-
-fn create_features() -> HashMap<String, Vec<String>> {
-    let mut res = HashMap::with_capacity(2);
-    res.insert("default".to_owned(), vec![]);
-    res.insert("otel".to_owned(), vec!["modkit/otel".to_owned()]);
-    res
-}
-
-fn insert_required_deps(
-    mut dependencies: HashMap<String, ConfigModuleMetadata>,
-) -> HashMap<String, ConfigModuleMetadata> {
-    dependencies.insert(
-        "modkit".to_owned(),
-        ConfigModuleMetadata {
-            package: Some("cf-modkit".to_owned()),
-            features: vec!["bootstrap".to_owned()],
-            ..Default::default()
-        },
-    );
-    dependencies.insert(
-        "anyhow".to_owned(),
-        ConfigModuleMetadata {
-            package: Some("anyhow".to_owned()),
-            version: Some("1".to_owned()),
-            ..Default::default()
-        },
-    );
-    dependencies.insert(
-        "tokio".to_owned(),
-        ConfigModuleMetadata {
-            package: Some("tokio".to_owned()),
-            features: vec!["full".to_owned()],
-            version: Some("1".to_owned()),
-            ..Default::default()
-        },
-    );
-    dependencies.insert(
-        "tracing".to_owned(),
-        ConfigModuleMetadata {
-            package: Some("tracing".to_owned()),
-            version: Some("0.1".to_owned()),
-            ..Default::default()
-        },
-    );
-    dependencies.insert(
-        "serde_json".to_owned(),
-        ConfigModuleMetadata {
-            package: Some("serde_json".to_owned()),
-            version: Some("1".to_owned()),
-            ..Default::default()
-        },
-    );
-    dependencies
-}
-
-fn generate_server_structure(
-    path: &Path,
-    config_path: &Path,
-    dependencies: &HashMap<String, ConfigModuleMetadata>,
-) -> anyhow::Result<()> {
-    let features = create_features();
-
-    let cargo_toml = toml::to_string(&CargoToml {
-        dependencies: insert_required_deps(dependencies.clone()),
-        features,
-        ..Default::default()
-    })
-    .context("something went wrong when transforming to toml")?;
-    let main_template = liquid::ParserBuilder::with_stdlib()
-        .build()?
-        .parse(CARGO_SERVER_MAIN)?;
-
-    create_file_structure(path, "Cargo.toml", &cargo_toml)?;
-    create_file_structure(path, ".cargo/config.toml", CARGO_CONFIG_TOML)?;
-    create_file_structure(
-        path,
-        "src/main.rs",
-        &main_template.render(&prepare_cargo_server_main(config_path, dependencies))?,
-    )?;
-
-    Ok(())
-}
-
-fn create_file_structure(path: &Path, relative_path: &str, contents: &str) -> anyhow::Result<()> {
-    let path = PathBuf::from(path).join(BASE_PATH).join(relative_path);
-    fs::create_dir_all(
-        path.parent().context(
-            "this should be unreacheable, the parent for the file structure always exists",
-        )?,
-    )
-    .context("can't create directory")?;
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)
-        .context("can't create file")?;
-    file.write_all(contents.as_bytes())
-        .context("can't write to file")
 }

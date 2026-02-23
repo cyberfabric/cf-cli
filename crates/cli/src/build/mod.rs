@@ -1,16 +1,46 @@
-use crate::common::CommonArgs;
+use crate::common::{self, BuildRunArgs, CommonArgs};
+use anyhow::{Context, bail};
 use clap::Args;
 
 #[derive(Args)]
 pub struct BuildArgs {
-    #[arg(short = 'r', long)]
-    release: bool,
+    #[command(flatten)]
+    build_run_args: BuildRunArgs,
     #[command(flatten)]
     common_args: CommonArgs,
 }
 
 impl BuildArgs {
     pub fn run(&self) -> anyhow::Result<()> {
-        unimplemented!("Not implemented yet")
+        let path = self
+            .build_run_args
+            .path
+            .canonicalize()
+            .context("can't canonicalize workspace")?;
+
+        let config_path = self
+            .common_args
+            .config
+            .canonicalize()
+            .context("can't canonicalize config")?;
+
+        let dependencies = common::get_config(&path, &config_path)?.create_dependencies()?;
+        common::generate_server_structure(&path, &config_path, &dependencies)?;
+
+        let cargo_dir = path.join(common::BASE_PATH);
+        let status = common::cargo_command(
+            "build",
+            &cargo_dir,
+            self.build_run_args.otel,
+            self.build_run_args.release,
+        )
+        .status()
+        .context("failed to run cargo build")?;
+
+        if !status.success() {
+            bail!("cargo build exited with {status}");
+        }
+
+        Ok(())
     }
 }
