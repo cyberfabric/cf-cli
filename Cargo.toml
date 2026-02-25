@@ -25,7 +25,7 @@ liquid = { version = "~0.26" } # align with cargo-generate
 serde = { version = "1.0", features = ["derive"] }
 serde-saphyr = { version = "0.0.20" }
 
-toml = { version = "1.0.3", features = ["serde"] }
+toml = { version = "0.9.12", features = ["serde"] }
 toml_edit = "0.25.3"
 
 notify = { version = "8.2.0", features = ["serde"] }

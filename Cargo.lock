@@ -239,7 +239,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "time",
- "toml 0.9.12+spec-1.1.0",
+ "toml",
  "walkdir",
 ]
 
@@ -264,7 +264,7 @@ dependencies = [
  "serde-untagged",
  "serde-value",
  "thiserror",
- "toml 0.9.12+spec-1.1.0",
+ "toml",
  "unicode-xid",
  "url",
 ]
@@ -359,7 +359,7 @@ dependencies = [
  "module-parser",
  "notify",
  "serde-saphyr",
- "toml 1.0.3+spec-1.1.0",
+ "toml",
  "toml_edit",
 ]
 
@@ -2315,21 +2315,6 @@ dependencies = [
  "serde_core",
  "serde_spanned",
  "toml_datetime 0.7.5+spec-1.1.0",
- "toml_parser",
- "toml_writer",
- "winnow",
-]
-
-[[package]]
-name = "toml"
-version = "1.0.3+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7614eaf19ad818347db24addfa201729cf2a9b6fdfd9eb0ab870fcacc606c0c"
-dependencies = [
- "indexmap",
- "serde_core",
- "serde_spanned",
- "toml_datetime 1.0.0+spec-1.1.0",
  "toml_parser",
  "toml_writer",
  "winnow",

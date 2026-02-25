@@ -52,11 +52,13 @@ pub struct ConfigModuleMetadata {
 pub struct CargoToml {
     #[serde(default)]
     pub package: Package,
-    pub dependencies: HashMap<String, ConfigModuleMetadata>,
+    pub dependencies: CargoTomlDependencies,
     pub features: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub workspace: HashMap<String, Vec<String>>,
 }
+
+pub type CargoTomlDependencies = HashMap<String, ConfigModuleMetadata>;
 
 #[derive(Serialize)]
 pub struct Package {

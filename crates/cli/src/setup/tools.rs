@@ -124,7 +124,7 @@ impl ToolsArgs {
                 println!("Skipping rustup upgrade");
             } else {
                 run_verbose(
-                    &mut Command::new("rustup").arg("self").arg("update"),
+                    Command::new("rustup").arg("self").arg("update"),
                     self.verbose,
                 )
                 .context("failed to upgrade rustup")?;
