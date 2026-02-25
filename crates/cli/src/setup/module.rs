@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Args)]
 pub struct ModuleArgs {
-    /// Name of the new module to create (e.g., "goodbye")
+    /// Kebab-case name of the new module to create (e.g., "my-new-module")
     name: String,
     /// Path to the workspace root (defaults to current directory)
     #[arg(short = 'p', long, default_value = ".")]
@@ -34,6 +34,14 @@ pub struct ModuleArgs {
 
 impl ModuleArgs {
     pub fn run(&self) -> anyhow::Result<()> {
+        if !is_kebab_case(&self.name) {
+            bail!(
+                "module name '{}' is not valid kebab-case. \
+                 Use lowercase letters, numbers, and hyphens (e.g., 'my-module-name').",
+                self.name
+            );
+        }
+
         let modules_dir = self.path.join("modules");
 
         if !modules_dir.exists() {
@@ -99,7 +107,7 @@ impl ModuleArgs {
         })
         .with_context(|| format!("can't generate module '{}'", self.name))?;
 
-        let mut dependencies = get_cargo_toml(&module_path).and_then(|x| get_dependencies(&x))?;
+        let mut dependencies = get_cargo_toml(&module_path).map(|x| get_dependencies(&x))?;
 
         let mut generated = vec![format!("modules/{}", self.name)];
 
@@ -120,7 +128,7 @@ impl ModuleArgs {
                 ..GenerateArgs::default()
             })
             .with_context(|| format!("can't generate sdk module '{}-sdk'", self.name))?;
-            dependencies.extend(get_cargo_toml(&sdk_template).and_then(|x| get_dependencies(&x))?);
+            dependencies.extend(get_cargo_toml(&sdk_template).map(|x| get_dependencies(&x))?);
             fs::remove_dir_all(sdk_template)
                 .with_context(|| format!("can't remove sdk template for module '{}'", self.name))?;
         }
@@ -129,21 +137,29 @@ impl ModuleArgs {
     }
 }
 
+fn is_kebab_case(s: &str) -> bool {
+    if s.is_empty() || s.starts_with('-') || s.ends_with('-') || s.contains("--") {
+        return false;
+    }
+
+    // Only lowercase letters, numbers, and hyphens allowed
+    s.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 fn get_cargo_toml(path: &Path) -> anyhow::Result<toml_edit::DocumentMut> {
     let cargo_toml_path = path.join("Cargo.toml");
     fs::read_to_string(&cargo_toml_path)
-        .context("can't read workspace Cargo.toml")?
+        .with_context(|| format!("can't read {}", path.display()))?
         .parse::<toml_edit::DocumentMut>()
-        .context("can't parse workspace Cargo.toml")
+        .with_context(|| format!("can't parse {}", path.display()))
 }
 
-fn get_dependencies(doc: &toml_edit::DocumentMut) -> anyhow::Result<CargoTomlDependencies> {
-    let dependencies = doc
-        .get("dependencies")
-        .and_then(|d| d.as_table())
-        .context("dependencies section not found or not a table")?;
-
+fn get_dependencies(doc: &toml_edit::DocumentMut) -> CargoTomlDependencies {
     let mut result = CargoTomlDependencies::new();
+    let Some(dependencies) = doc.get("dependencies").and_then(|d| d.as_table()) else {
+        return result;
+    };
 
     for (name, value) in dependencies {
         let metadata = if let Some(dep) = value.as_str() {
@@ -178,7 +194,7 @@ fn get_dependencies(doc: &toml_edit::DocumentMut) -> anyhow::Result<CargoTomlDep
         result.insert(name.to_string(), metadata);
     }
 
-    Ok(result)
+    result
 }
 
 fn add_modules_to_workspace(

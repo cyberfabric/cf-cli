@@ -6,7 +6,7 @@ use std::process::Command;
 #[derive(Args)]
 pub struct ToolsArgs {
     /// Install all tools
-    #[arg(short = 'a', long)]
+    #[arg(short = 'a', long, conflicts_with = "install")]
     all: bool,
     /// Upgrade tools to the recommended version
     #[arg(short = 'u', long)]
@@ -81,11 +81,19 @@ impl ToolsArgs {
             return Ok(tools);
         }
 
-        Ok(TOOLS.iter().collect())
+        if self.all {
+            return Ok(TOOLS.iter().collect());
+        }
+
+        bail!(
+            "no tools specified. Use --all to install all tools, or --install <tool,...> to install specific tools. \
+             Known tools: {}",
+            TOOLS.iter().map(|t| t.name).collect::<Vec<_>>().join(", ")
+        )
     }
 
     fn install_tools(&self, tools: &[&Tool]) -> anyhow::Result<()> {
-        ensure_rustup()?;
+        ensure_rustup(self.yolo)?;
 
         for tool in tools {
             let installed = is_installed(tool.check_binary);
@@ -116,7 +124,7 @@ impl ToolsArgs {
     }
 
     fn upgrade_tools(&self, tools: &[&Tool]) -> anyhow::Result<()> {
-        ensure_rustup()?;
+        ensure_rustup(self.yolo)?;
 
         let has_rustup = tools.iter().any(|t| t.name == "rustup");
         if has_rustup {
@@ -153,12 +161,19 @@ impl ToolsArgs {
     }
 }
 
-fn ensure_rustup() -> anyhow::Result<()> {
+fn ensure_rustup(yolo: bool) -> anyhow::Result<()> {
     if is_installed("rustup") {
         return Ok(());
     }
 
-    println!("rustup is not installed. Attempting to install it...");
+    if !yolo && !confirm("rustup is not installed. Install it now?")? {
+        bail!(
+            "rustup is required but not installed. \
+             Please install it manually (https://rustup.rs) or re-run with --yolo to auto-install."
+        );
+    }
+
+    println!("Installing rustup...");
     install_rustup().context("failed to install rustup")?;
 
     if !is_installed("rustup") && !is_installed(&cargo_bin_path("rustup")) {
