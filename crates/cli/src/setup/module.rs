@@ -171,15 +171,17 @@ fn get_dependencies(doc: &toml_edit::DocumentMut) -> CargoTomlDependencies {
             }
         } else {
             // Table or inline table: `package = { version = "1.0", ... }`
-            let (package, version) = if let Some(table) = value.as_table() {
+            let (package, version, pkg) = if let Some(table) = value.as_table() {
                 (
                     table.get("package").and_then(|p| p.as_str()),
                     table.get("version").and_then(|v| v.as_str()),
+                    table.get("path").and_then(|p| p.as_str()),
                 )
             } else if let Some(inline) = value.as_inline_table() {
                 (
                     inline.get("package").and_then(|p| p.as_str()),
                     inline.get("version").and_then(|v| v.as_str()),
+                    inline.get("path").and_then(|p| p.as_str()),
                 )
             } else {
                 continue;
@@ -188,6 +190,7 @@ fn get_dependencies(doc: &toml_edit::DocumentMut) -> CargoTomlDependencies {
             module_parser::ConfigModuleMetadata {
                 package: package.map(String::from),
                 version: version.map(String::from),
+                path: pkg.map(String::from),
                 ..Default::default()
             }
         };

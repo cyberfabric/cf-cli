@@ -35,7 +35,7 @@ build-dir = "../target"
 const CARGO_SERVER_MAIN: &str = r#"
 use anyhow::Result;
 use modkit::bootstrap::{
-    AppConfig, host::init_logging_unified, /* run_migrate, */ run_server,
+    AppConfig, host::{init_logging_unified, init_panic_tracing}, /* run_migrate, */ run_server,
 };
 {{dependencies}}
 
@@ -46,12 +46,8 @@ async fn main() -> Result<()> {
     // Build OpenTelemetry layer before logging
     // Convert TracingConfig from modkit::bootstrap to modkit's type (they have identical structure)
     #[cfg(feature = "otel")]
-    let modkit_tracing_config: Option<modkit::telemetry::TracingConfig> = config.tracing.clone();
-    #[cfg(feature = "otel")]
-    let otel_layer = if let Some(tc) = modkit_tracing_config.as_ref()
-        && tc.enabled
-    {
-        Some(modkit::telemetry::init::init_tracing(tc)?)
+    let otel_layer = if config.tracing.enabled {
+        Some(modkit::telemetry::init::init_tracing(&config.tracing)?)
     } else {
         None
     };
@@ -59,13 +55,15 @@ async fn main() -> Result<()> {
     let otel_layer = None;
 
     // Initialize logging + otel in one Registry
-    let logging_config = config.logging.clone().unwrap_or_default();
-    init_logging_unified(&logging_config, &config.server.home_dir, otel_layer);
+    init_logging_unified(&config.logging, &config.server.home_dir, otel_layer);
+
+    // Register custom panic hook to reroute panic backtrace into tracing.
+    init_panic_tracing();
 
     // One-time connectivity probe
     #[cfg(feature = "otel")]
-    if let Some(tc) = modkit_tracing_config.as_ref()
-        && let Err(e) = modkit::telemetry::init::otel_connectivity_probe(tc)
+    if config.tracing.enabled
+        && let Err(e) = modkit::telemetry::init::otel_connectivity_probe(&config.tracing)
     {
         tracing::error!(error = %e, "OTLP connectivity probe failed");
     }
