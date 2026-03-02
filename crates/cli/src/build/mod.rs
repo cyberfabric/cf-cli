@@ -1,4 +1,4 @@
-use crate::common::{self, BuildRunArgs, CommonArgs};
+use crate::common::{self, BuildRunArgs};
 use anyhow::{Context, bail};
 use clap::Args;
 
@@ -6,8 +6,6 @@ use clap::Args;
 pub struct BuildArgs {
     #[command(flatten)]
     build_run_args: BuildRunArgs,
-    #[command(flatten)]
-    common_args: CommonArgs,
 }
 
 impl BuildArgs {
@@ -19,7 +17,7 @@ impl BuildArgs {
             .context("can't canonicalize workspace")?;
 
         let config_path = self
-            .common_args
+            .build_run_args
             .config
             .canonicalize()
             .context("can't canonicalize config")?;

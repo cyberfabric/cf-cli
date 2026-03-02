@@ -12,7 +12,7 @@ pub fn get_module_name_from_crate(path: &PathBuf) -> anyhow::Result<HashMap<Stri
     let mut members = HashMap::new();
     for pkg in res.packages {
         for t in &pkg.targets {
-            if t.is_lib() {
+            if t.is_lib() && !t.name.ends_with("sdk") {
                 match super::module_rs::retrieve_module_rs(&pkg, t.clone()) {
                     Ok(module) => {
                         members.insert(module.0, module.1);

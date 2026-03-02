@@ -1,6 +1,6 @@
 mod run_loop;
 
-use crate::common::{BuildRunArgs, CommonArgs};
+use crate::common::BuildRunArgs;
 use crate::run::run_loop::RunSignal;
 use anyhow::Context;
 use clap::Args;
@@ -12,8 +12,6 @@ pub struct RunArgs {
     watch: bool,
     #[command(flatten)]
     br_args: BuildRunArgs,
-    #[command(flatten)]
-    common_args: CommonArgs,
 }
 
 impl RunArgs {
@@ -25,7 +23,7 @@ impl RunArgs {
             .context("can't canonicalize workspace")?;
 
         let config_path = self
-            .common_args
+            .br_args
             .config
             .canonicalize()
             .context("can't canonicalize config")?;

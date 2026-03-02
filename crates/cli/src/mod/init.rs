@@ -41,18 +41,14 @@ impl InitArgs {
             .context("path is strange")?
             .to_str()
             .context("name is strange")?;
-        let (git, subfolder, branch) = if self.local_path.is_some() {
-            (None, None, None)
+        let (git, branch) = if self.local_path.is_some() {
+            (None, None)
         } else {
-            (
-                self.git.clone(),
-                self.subfolder.clone(),
-                self.branch.clone(),
-            )
+            (self.git.clone(), self.branch.clone())
         };
         generate(GenerateArgs {
             template_path: TemplatePath {
-                auto_path: subfolder,
+                auto_path: self.subfolder.clone(),
                 git,
                 path: self.local_path.clone(),
                 subfolder: None, // This is only used when git, path and favorite are not specified

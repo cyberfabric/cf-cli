@@ -7,13 +7,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Args)]
-pub struct CommonArgs {
+pub struct BuildRunArgs {
+    /// Path to the config file
     #[arg(short = 'c', long, default_value = "./cyberfabric.yaml")]
     pub config: PathBuf,
-}
-
-#[derive(Args)]
-pub struct BuildRunArgs {
     /// Path to the module
     #[arg(short = 'p', long, default_value = ".")]
     pub path: PathBuf,
@@ -96,7 +93,7 @@ pub fn get_config(path: &Path, config_path: &Path) -> anyhow::Result<Config> {
             module.1.metadata = module_metadata.metadata;
         } else {
             eprintln!(
-                "warning: config module '{}' has no matching workspace member; metadata will not be merged",
+                "info: config module '{}' not found locally, retrieving it from the registry",
                 module.0
             );
         }

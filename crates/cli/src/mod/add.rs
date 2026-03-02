@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
-pub struct ModuleArgs {
+pub struct AddArgs {
     /// Kebab-case name of the new module to create (e.g., "my-new-module")
     name: String,
     /// Path to the workspace root (defaults to current directory)
@@ -32,7 +32,7 @@ pub struct ModuleArgs {
     branch: Option<String>,
 }
 
-impl ModuleArgs {
+impl AddArgs {
     pub fn run(&self) -> anyhow::Result<()> {
         if !is_kebab_case(&self.name) {
             bail!(
@@ -73,32 +73,21 @@ impl ModuleArgs {
             bail!("module {} already exists", self.name);
         }
 
-        let (git, auto_path, branch) = if self.local_path.is_some() {
-            (None, None, None)
+        let (git, branch) = if self.local_path.is_some() {
+            (None, None)
         } else {
-            (
-                self.git.clone(),
-                Some(self.subfolder.clone()),
-                self.branch.clone(),
-            )
+            (self.git.clone(), self.branch.clone())
         };
-
-        let local_path = self.local_path.as_ref().map(|p| {
-            PathBuf::from(p)
-                .join(&self.subfolder)
-                .to_string_lossy()
-                .to_string()
-        });
 
         generate(GenerateArgs {
             template_path: TemplatePath {
-                auto_path,
+                auto_path: Some(self.subfolder.clone()),
                 git,
-                path: local_path,
+                path: self.local_path.clone(),
                 branch,
                 ..TemplatePath::default()
             },
-            destination: Some(modules_path.clone()),
+            destination: Some(modules_path),
             name: Some(self.name.clone()),
             quiet: !self.verbose,
             verbose: self.verbose,
@@ -113,24 +102,8 @@ impl ModuleArgs {
 
         let sdk_template = module_path.join("sdk");
         if sdk_template.exists() {
-            let name = format!("{}-sdk", self.name);
-            generated.push(format!("modules/{name}"));
-            generate(GenerateArgs {
-                template_path: TemplatePath {
-                    path: Some(sdk_template.to_string_lossy().to_string()),
-                    ..TemplatePath::default()
-                },
-                destination: Some(modules_path),
-                name: Some(name),
-                quiet: !self.verbose,
-                verbose: self.verbose,
-                no_workspace: true,
-                ..GenerateArgs::default()
-            })
-            .with_context(|| format!("can't generate sdk module '{}-sdk'", self.name))?;
+            generated.push(format!("modules/{}/sdk", self.name));
             dependencies.extend(get_cargo_toml(&sdk_template).map(|x| get_dependencies(&x))?);
-            fs::remove_dir_all(sdk_template)
-                .with_context(|| format!("can't remove sdk template for module '{}'", self.name))?;
         }
 
         Ok((generated, dependencies))
@@ -157,7 +130,7 @@ fn get_cargo_toml(path: &Path) -> anyhow::Result<toml_edit::DocumentMut> {
 
 fn get_dependencies(doc: &toml_edit::DocumentMut) -> CargoTomlDependencies {
     let mut result = CargoTomlDependencies::new();
-    let Some(dependencies) = doc.get("dependencies").and_then(|d| d.as_table()) else {
+    let Some(dependencies) = doc["dependencies"].as_table() else {
         return result;
     };
 
@@ -207,7 +180,15 @@ fn add_modules_to_workspace(
     let members = doc["workspace"]["members"]
         .as_array_mut()
         .context("workspace.members is not an array")?;
-    members.extend(modules);
+    for m in modules {
+        let s = m.as_str();
+        if !members
+            .iter()
+            .any(|x| matches!(x.as_str(), Some(inner) if inner == s))
+        {
+            members.push(m);
+        }
+    }
     Ok(())
 }
 
