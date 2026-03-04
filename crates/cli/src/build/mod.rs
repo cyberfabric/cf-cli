@@ -12,13 +12,15 @@ impl BuildArgs {
     pub fn run(&self) -> anyhow::Result<()> {
         let path = self
             .build_run_args
+            .path_config
             .path
             .canonicalize()
             .context("can't canonicalize workspace")?;
 
         let config_path = self
             .build_run_args
-            .config
+            .path_config
+            .resolve_config_with_default(std::path::Path::new("./cyberfabric.yaml"))
             .canonicalize()
             .context("can't canonicalize config")?;
 

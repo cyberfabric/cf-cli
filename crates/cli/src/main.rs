@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 
 mod build;
 mod common;
+mod config;
 mod lint;
 mod r#mod;
 mod run;
@@ -20,6 +21,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Mod(r#mod::ModArgs),
+    Config(config::ConfigArgs),
     Lint(lint::LintArgs),
     Test(test::TestArgs),
     Tools(tools::ToolsArgs),
@@ -32,6 +34,7 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Mod(r#mod) => r#mod.run(),
+        Commands::Config(config) => config.run(),
         Commands::Lint(lint) => lint.run(),
         Commands::Test(test) => test.run(),
         Commands::Tools(tools) => tools.run(),

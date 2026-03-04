@@ -1,14 +1,15 @@
 use anyhow::{Context, bail};
 use cargo_generate::{GenerateArgs, TemplatePath, generate};
-use clap::Args;
-use module_parser::CargoTomlDependencies;
+use clap::{Args, ValueEnum};
+use module_parser::{CargoTomlDependencies, CargoTomlDependency};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
 pub struct AddArgs {
-    /// Kebab-case name of the new module to create (e.g., "my-new-module")
-    name: String,
+    /// Module template and module name to generate
+    #[arg(value_enum)]
+    name: ModuleTemplateName,
     /// Path to the workspace root (defaults to current directory)
     #[arg(short = 'p', long, default_value = ".")]
     path: PathBuf,
@@ -32,16 +33,28 @@ pub struct AddArgs {
     branch: Option<String>,
 }
 
+#[derive(Clone, Debug, ValueEnum)]
+enum ModuleTemplateName {
+    #[value(name = "background-worker")]
+    BackgroundWorker,
+    #[value(name = "api-db-handler")]
+    ApiDbHandler,
+    #[value(name = "rest-gateway")]
+    RestGateway,
+}
+
+impl ModuleTemplateName {
+    const fn as_str(&self) -> &'static str {
+        match self {
+            Self::BackgroundWorker => "background-worker",
+            Self::ApiDbHandler => "api-db-handler",
+            Self::RestGateway => "rest-gateway",
+        }
+    }
+}
+
 impl AddArgs {
     pub fn run(&self) -> anyhow::Result<()> {
-        if !is_kebab_case(&self.name) {
-            bail!(
-                "module name '{}' is not valid kebab-case. \
-                 Use lowercase letters, numbers, and hyphens (e.g., 'my-module-name').",
-                self.name
-            );
-        }
-
         let modules_dir = self.path.join("modules");
 
         if !modules_dir.exists() {
@@ -67,10 +80,11 @@ impl AddArgs {
     }
 
     fn generate_module(&self) -> anyhow::Result<(Vec<String>, CargoTomlDependencies)> {
+        let module_name = self.name.as_str();
         let modules_path = self.path.join("modules");
-        let module_path = modules_path.join(&self.name);
+        let module_path = modules_path.join(module_name);
         if module_path.exists() {
-            bail!("module {} already exists", self.name);
+            bail!("module {module_name} already exists");
         }
 
         let (git, branch) = if self.local_path.is_some() {
@@ -79,45 +93,37 @@ impl AddArgs {
             (self.git.clone(), self.branch.clone())
         };
 
+        let auto_path = format!("{}/{}", self.subfolder, module_name);
+
         generate(GenerateArgs {
             template_path: TemplatePath {
-                auto_path: Some(self.subfolder.clone()),
+                auto_path: Some(auto_path),
                 git,
                 path: self.local_path.clone(),
                 branch,
                 ..TemplatePath::default()
             },
             destination: Some(modules_path),
-            name: Some(self.name.clone()),
+            name: Some(module_name.to_string()),
             quiet: !self.verbose,
             verbose: self.verbose,
             no_workspace: true,
             ..GenerateArgs::default()
         })
-        .with_context(|| format!("can't generate module '{}'", self.name))?;
+        .with_context(|| format!("can't generate module '{module_name}'"))?;
 
         let mut dependencies = get_cargo_toml(&module_path).map(|x| get_dependencies(&x))?;
 
-        let mut generated = vec![format!("modules/{}", self.name)];
+        let mut generated = vec![format!("modules/{}", module_name)];
 
         let sdk_template = module_path.join("sdk");
         if sdk_template.exists() {
-            generated.push(format!("modules/{}/sdk", self.name));
+            generated.push(format!("modules/{module_name}/sdk"));
             dependencies.extend(get_cargo_toml(&sdk_template).map(|x| get_dependencies(&x))?);
         }
 
         Ok((generated, dependencies))
     }
-}
-
-fn is_kebab_case(s: &str) -> bool {
-    if s.is_empty() || s.starts_with('-') || s.ends_with('-') || s.contains("--") {
-        return false;
-    }
-
-    // Only lowercase letters, numbers, and hyphens allowed
-    s.chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 fn get_cargo_toml(path: &Path) -> anyhow::Result<toml_edit::DocumentMut> {
@@ -137,34 +143,68 @@ fn get_dependencies(doc: &toml_edit::DocumentMut) -> CargoTomlDependencies {
     for (name, value) in dependencies {
         let metadata = if let Some(dep) = value.as_str() {
             // Simple string version: `package = "1.0"`
-            module_parser::ConfigModuleMetadata {
+            CargoTomlDependency {
                 package: Some(name.to_string()),
                 version: Some(dep.to_string()),
                 ..Default::default()
             }
         } else {
             // Table or inline table: `package = { version = "1.0", ... }`
-            let (package, version, pkg) = if let Some(table) = value.as_table() {
-                (
-                    table.get("package").and_then(|p| p.as_str()),
-                    table.get("version").and_then(|v| v.as_str()),
-                    table.get("path").and_then(|p| p.as_str()),
-                )
-            } else if let Some(inline) = value.as_inline_table() {
-                (
-                    inline.get("package").and_then(|p| p.as_str()),
-                    inline.get("version").and_then(|v| v.as_str()),
-                    inline.get("path").and_then(|p| p.as_str()),
-                )
-            } else {
-                continue;
-            };
+            let (package, version, pkg, features, default_features) =
+                if let Some(table) = value.as_table() {
+                    let features = table
+                        .get("features")
+                        .and_then(|f| f.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(ToOwned::to_owned))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let default_features = table
+                        .get("default-features")
+                        .or_else(|| table.get("default_features"))
+                        .and_then(toml_edit::Item::as_bool);
 
-            module_parser::ConfigModuleMetadata {
+                    (
+                        table.get("package").and_then(|p| p.as_str()),
+                        table.get("version").and_then(|v| v.as_str()),
+                        table.get("path").and_then(|p| p.as_str()),
+                        features,
+                        default_features,
+                    )
+                } else if let Some(inline) = value.as_inline_table() {
+                    let features = inline
+                        .get("features")
+                        .and_then(|f| f.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(ToOwned::to_owned))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let default_features = inline
+                        .get("default-features")
+                        .or_else(|| inline.get("default_features"))
+                        .and_then(toml_edit::Value::as_bool);
+
+                    (
+                        inline.get("package").and_then(|p| p.as_str()),
+                        inline.get("version").and_then(|v| v.as_str()),
+                        inline.get("path").and_then(|p| p.as_str()),
+                        features,
+                        default_features,
+                    )
+                } else {
+                    continue;
+                };
+
+            CargoTomlDependency {
                 package: package.map(String::from),
                 version: version.map(String::from),
                 path: pkg.map(String::from),
-                ..Default::default()
+                features,
+                default_features,
             }
         };
         result.insert(name.to_string(), metadata);
@@ -217,6 +257,10 @@ fn add_dependencies_to_workspace(
             dep_table.insert("version", "*".into());
         }
 
+        if let Some(default_features) = metadata.default_features {
+            dep_table.insert("default-features", default_features.into());
+        }
+
         if !metadata.features.is_empty() {
             let features_array: toml_edit::Array = metadata
                 .features
@@ -224,6 +268,10 @@ fn add_dependencies_to_workspace(
                 .map(toml_edit::Value::from)
                 .collect();
             dep_table.insert("features", toml_edit::Value::Array(features_array));
+        }
+
+        if let Some(path) = metadata.path {
+            dep_table.insert("path", path.into());
         }
 
         workspace_deps.insert(&name, toml_edit::Item::Value(dep_table.into()));

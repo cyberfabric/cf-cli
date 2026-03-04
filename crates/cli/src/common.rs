@@ -1,19 +1,49 @@
-use anyhow::Context;
+use anyhow::{Context, bail};
 use clap::Args;
-use module_parser::{CargoToml, Config, ConfigModuleMetadata, get_module_name_from_crate};
+use module_parser::{
+    CargoToml, CargoTomlDependencies, CargoTomlDependency, Config, get_module_name_from_crate,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Args)]
-pub struct BuildRunArgs {
-    /// Path to the config file
-    #[arg(short = 'c', long, default_value = "./cyberfabric.yaml")]
-    pub config: PathBuf,
+pub struct PathConfigArgs {
     /// Path to the module
     #[arg(short = 'p', long, default_value = ".")]
     pub path: PathBuf,
+    /// Path to the config file
+    #[arg(short = 'c', long)]
+    pub config: Option<PathBuf>,
+}
+
+impl PathConfigArgs {
+    pub fn resolve_config_required(&self) -> anyhow::Result<PathBuf> {
+        let Some(config) = &self.config else {
+            bail!("missing required argument '--config <CONFIG>'");
+        };
+        Ok(self.resolve_config_from(config))
+    }
+
+    pub fn resolve_config_with_default(&self, default_config: &Path) -> PathBuf {
+        let config = self.config.as_deref().unwrap_or(default_config);
+        self.resolve_config_from(config)
+    }
+
+    fn resolve_config_from(&self, config: &Path) -> PathBuf {
+        if config.is_absolute() {
+            config.to_path_buf()
+        } else {
+            self.path.join(config)
+        }
+    }
+}
+
+#[derive(Args)]
+pub struct BuildRunArgs {
+    #[command(flatten)]
+    pub path_config: PathConfigArgs,
     /// Use OpenTelemetry tracing
     #[arg(long)]
     pub otel: bool,
@@ -114,12 +144,10 @@ fn create_features() -> HashMap<String, Vec<String>> {
     res
 }
 
-fn insert_required_deps(
-    mut dependencies: HashMap<String, ConfigModuleMetadata>,
-) -> HashMap<String, ConfigModuleMetadata> {
+fn insert_required_deps(mut dependencies: CargoTomlDependencies) -> CargoTomlDependencies {
     dependencies.insert(
         "modkit".to_owned(),
-        ConfigModuleMetadata {
+        CargoTomlDependency {
             package: Some("cf-modkit".to_owned()),
             features: vec!["bootstrap".to_owned()],
             ..Default::default()
@@ -127,7 +155,7 @@ fn insert_required_deps(
     );
     dependencies.insert(
         "anyhow".to_owned(),
-        ConfigModuleMetadata {
+        CargoTomlDependency {
             package: Some("anyhow".to_owned()),
             version: Some("1".to_owned()),
             ..Default::default()
@@ -135,7 +163,7 @@ fn insert_required_deps(
     );
     dependencies.insert(
         "tokio".to_owned(),
-        ConfigModuleMetadata {
+        CargoTomlDependency {
             package: Some("tokio".to_owned()),
             features: vec!["full".to_owned()],
             version: Some("1".to_owned()),
@@ -144,7 +172,7 @@ fn insert_required_deps(
     );
     dependencies.insert(
         "tracing".to_owned(),
-        ConfigModuleMetadata {
+        CargoTomlDependency {
             package: Some("tracing".to_owned()),
             version: Some("0.1".to_owned()),
             ..Default::default()
@@ -156,7 +184,7 @@ fn insert_required_deps(
 pub fn generate_server_structure(
     path: &Path,
     config_path: &Path,
-    dependencies: &HashMap<String, ConfigModuleMetadata>,
+    dependencies: &CargoTomlDependencies,
 ) -> anyhow::Result<()> {
     let features = create_features();
 
@@ -203,7 +231,7 @@ fn create_file_structure(path: &Path, relative_path: &str, contents: &str) -> an
 /// UNC paths are not supported like `\\server\share`, as we replace backslashes with forward slashes.
 fn prepare_cargo_server_main(
     config_path: &Path,
-    dependencies: &HashMap<String, ConfigModuleMetadata>,
+    dependencies: &CargoTomlDependencies,
 ) -> liquid::Object {
     use std::fmt::Write;
     let dependencies = dependencies.keys().fold(String::new(), |mut acc, name| {

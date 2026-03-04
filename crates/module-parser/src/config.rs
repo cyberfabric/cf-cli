@@ -1,6 +1,7 @@
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 #[derive(Deserialize)]
 pub struct Config {
@@ -8,7 +9,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn create_dependencies(self) -> anyhow::Result<HashMap<String, ConfigModuleMetadata>> {
+    pub fn create_dependencies(self) -> anyhow::Result<CargoTomlDependencies> {
         let mut dependencies = HashMap::with_capacity(self.modules.len());
         for (name, module) in self.modules.into_iter() {
             let Some(package) = module.metadata.package.clone() else {
@@ -18,7 +19,17 @@ impl Config {
             if dependencies.contains_key(&package) {
                 bail!("module '{name}' has duplicate package name '{package}'");
             }
-            dependencies.insert(package, module.metadata);
+
+            dependencies.insert(
+                package,
+                CargoTomlDependency {
+                    package: module.metadata.package,
+                    version: module.metadata.version,
+                    features: module.metadata.features,
+                    default_features: module.metadata.default_features,
+                    path: module.metadata.path,
+                },
+            );
         }
 
         Ok(dependencies)
@@ -28,6 +39,33 @@ impl Config {
 #[derive(Deserialize)]
 pub struct ConfigModule {
     pub metadata: ConfigModuleMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Capability {
+    Db,
+    Rest,
+    RestHost,
+    Stateful,
+    System,
+    GrpcHub,
+    Grpc,
+}
+
+impl fmt::Display for Capability {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Db => "db",
+            Self::Rest => "rest",
+            Self::RestHost => "rest_host",
+            Self::Stateful => "stateful",
+            Self::System => "system",
+            Self::GrpcHub => "grpc_hub",
+            Self::Grpc => "grpc",
+        };
+        f.write_str(name)
+    }
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -42,10 +80,14 @@ pub struct ConfigModuleMetadata {
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub features: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_features: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deps: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<Capability>,
 }
 
 #[derive(Default, Serialize)]
@@ -58,7 +100,25 @@ pub struct CargoToml {
     pub workspace: HashMap<String, Vec<String>>,
 }
 
-pub type CargoTomlDependencies = HashMap<String, ConfigModuleMetadata>;
+pub type CargoTomlDependencies = HashMap<String, CargoTomlDependency>;
+
+#[derive(Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CargoTomlDependency {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    #[serde(
+        default,
+        serialize_with = "opt_string_none_as_star::serialize",
+        deserialize_with = "opt_string_none_as_star::deserialize"
+    )]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_features: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
 
 #[derive(Serialize)]
 pub struct Package {

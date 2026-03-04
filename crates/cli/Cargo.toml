@@ -19,7 +19,13 @@ liquid = { workspace = true }
 module-parser = { workspace = true }
 notify = { workspace = true }
 
+serde = { workspace = true }
 serde-saphyr = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
 toml = { workspace = true }
 toml_edit = { workspace = true }
 

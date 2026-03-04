@@ -1,8 +1,7 @@
 use crate::common;
 use anyhow::{Context, bail};
-use module_parser::ConfigModuleMetadata;
 use notify::{RecursiveMode, Watcher};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
@@ -111,7 +110,9 @@ impl RunLoop {
                                     if let Err(err) = watcher.unwatch(old) {
                                         eprintln!("failed to unwatch {}: {err}", old.display());
                                         _ = signal_tx.send(RunSignal::Stop);
-                                        runner_handle.join().expect("runner thread panicked");
+                                        runner_handle.join().map_err(|e| {
+                                            anyhow::anyhow!("runner thread panicked: {e:?}")
+                                        })?;
                                         return Ok(RunSignal::Rerun);
                                     }
                                 }
@@ -120,7 +121,9 @@ impl RunLoop {
                                     {
                                         eprintln!("failed to watch {}: {err}", new_p.display());
                                         _ = signal_tx.send(RunSignal::Stop);
-                                        runner_handle.join().expect("runner thread panicked");
+                                        runner_handle.join().map_err(|e| {
+                                            anyhow::anyhow!("runner thread panicked: {e:?}")
+                                        })?;
                                         return Ok(RunSignal::Rerun);
                                     }
                                 }
@@ -140,7 +143,9 @@ impl RunLoop {
 
         // Watcher channel closed - shut down the runner
         _ = signal_tx.send(RunSignal::Stop);
-        runner_handle.join().expect("runner thread panicked");
+        runner_handle
+            .join()
+            .map_err(|e| anyhow::anyhow!("runner thread panicked: {e:?}"))?;
 
         Ok(RunSignal::Stop)
     }
@@ -220,7 +225,7 @@ fn cargo_run_loop(cargo_dir: &Path, signal_rx: &mpsc::Receiver<RunSignal>) {
 }
 
 fn collect_dep_paths(
-    deps: &HashMap<String, ConfigModuleMetadata>,
+    deps: &module_parser::CargoTomlDependencies,
     base_path: &Path,
 ) -> HashSet<PathBuf> {
     deps.values()
@@ -230,7 +235,7 @@ fn collect_dep_paths(
 }
 
 fn watch_dependency_paths(
-    deps: &HashMap<String, ConfigModuleMetadata>,
+    deps: &module_parser::CargoTomlDependencies,
     watcher: &mut impl Watcher,
     base_path: &Path,
 ) -> HashSet<PathBuf> {
