@@ -1,12 +1,17 @@
 use super::{SYSTEM_REGISTRY_MODULES, SystemRegistryModule, load_config, resolve_modules_context};
 use crate::common::PathConfigArgs;
+use crate::config::app_config::ModuleConfig;
 use anyhow::{Context, bail};
 use clap::Args;
 use flate2::read::GzDecoder;
-use module_parser::{Capability, ConfigModule, get_module_name_from_crate, parse_module_rs_source};
+use module_parser::{
+    Capability, ConfigModule, ConfigModuleMetadata, get_module_name_from_crate,
+    parse_module_rs_source,
+};
 use reqwest::Client;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt::Display;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -15,7 +20,11 @@ use std::time::Duration;
 pub struct ListArgs {
     #[command(flatten)]
     path_config: PathConfigArgs,
-    /// Verbose output. Fetches registry metadata for system crates.
+    /// Show system crates also. If verbose is enabled,
+    /// fetches registry metadata for system crates. (makes requests to the registry)
+    #[arg(short = 's', long)]
+    system: bool,
+    /// Show all information related to the module.
     #[arg(short = 'v', long)]
     verbose: bool,
     /// Registry to query when verbose mode is enabled.
@@ -30,59 +39,34 @@ impl ListArgs {
         let config = load_config(&context.config_path)?;
         let enabled_modules: BTreeSet<_> = config.modules.keys().map(String::as_str).collect();
 
-        println!("System crates:");
-        if self.verbose {
-            if self.registry != "crates.io" {
-                let registry = &self.registry;
-                bail!("unsupported registry '{registry}'. Only 'crates.io' is currently supported");
-            }
-
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .context("failed to build tokio runtime for registry queries")?;
-
-            let metadata_by_crate = runtime.block_on(fetch_all_crates_io_metadata())?;
-
-            for module in SYSTEM_REGISTRY_MODULES {
-                let Some(metadata) = metadata_by_crate.get(module.crate_name) else {
-                    bail!("missing fetched metadata for '{}'", module.crate_name);
-                };
-
-                println!("  - {}", module.module_name);
-                println!("      crate: {}", module.crate_name);
-                println!("      latest_version: {}", metadata.latest_version);
-
-                if metadata.features.is_empty() {
-                    println!("      features: (none)");
-                } else {
-                    println!("      features:");
-                    for feature in &metadata.features {
-                        println!("        - {feature}");
-                    }
+        if self.system {
+            println!("System crates:");
+            if self.verbose {
+                if self.registry != "crates.io" {
+                    let registry = &self.registry;
+                    bail!(
+                        "unsupported registry '{registry}'. Only 'crates.io' is currently supported"
+                    );
                 }
 
-                if metadata.deps.is_empty() {
-                    println!("      deps: (none)");
-                } else {
-                    println!("      deps:");
-                    for dep in &metadata.deps {
-                        println!("        - {dep}");
-                    }
-                }
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .context("failed to build tokio runtime for registry queries")?;
 
-                if metadata.capabilities.is_empty() {
-                    println!("      capabilities: (none)");
-                } else {
-                    println!("      capabilities:");
-                    for capability in &metadata.capabilities {
-                        println!("        - {capability}");
-                    }
+                let metadata_by_crate = runtime.block_on(fetch_all_crates_io_metadata())?;
+
+                for module in SYSTEM_REGISTRY_MODULES {
+                    let Some(metadata) = metadata_by_crate.get(module.crate_name) else {
+                        bail!("missing fetched metadata for '{}'", module.crate_name);
+                    };
+
+                    print_system_registry_metadata(module, metadata);
                 }
-            }
-        } else {
-            for module in SYSTEM_REGISTRY_MODULES {
-                println!("  - {}", module.module_name);
+            } else {
+                for module in SYSTEM_REGISTRY_MODULES {
+                    println!("  - {}", module.module_name);
+                }
             }
         }
 
@@ -148,67 +132,51 @@ fn discover_workspace_modules(
 }
 
 fn print_local_metadata(module: &ConfigModule) {
-    let metadata = &module.metadata;
-    if let Some(package) = &metadata.package {
-        println!("      package: {package}");
-    }
-    if let Some(version) = &metadata.version {
-        println!("      version: {version}");
-    }
-    if let Some(path) = &metadata.path {
-        println!("      path: {path}");
-    }
-
-    if metadata.deps.is_empty() {
-        println!("      deps: (none)");
-    } else {
-        println!("      deps:");
-        for dep in &metadata.deps {
-            println!("        - {dep}");
-        }
-    }
-
-    if metadata.capabilities.is_empty() {
-        println!("      capabilities: (none)");
-    } else {
-        println!("      capabilities:");
-        for capability in &metadata.capabilities {
-            println!("        - {capability}");
-        }
-    }
+    print_metadata(&module.metadata);
 }
 
-fn print_config_metadata(module: &crate::config::app_config::ModuleConfig) {
+fn print_config_metadata(module: &ModuleConfig) {
     let Some(metadata) = &module.metadata else {
         println!("      metadata: (none)");
         return;
     };
 
-    if let Some(package) = &metadata.package {
-        println!("      package: {package}");
-    }
-    if let Some(version) = &metadata.version {
-        println!("      version: {version}");
-    }
-    if let Some(path) = &metadata.path {
-        println!("      path: {path}");
-    }
+    print_metadata(metadata);
+}
 
-    if metadata.features.is_empty() {
-        println!("      features: (none)");
-    } else {
-        println!("      features:");
-        for feature in &metadata.features {
-            println!("        - {feature}");
-        }
-    }
+fn print_system_registry_metadata(module: &SystemRegistryModule, metadata: &RegistryMetadata) {
+    println!("  - {}", module.module_name);
+    println!("      crate: {}", module.crate_name);
+    println!("      latest_version: {}", metadata.latest_version);
+    print_value_list("features", &metadata.features);
+    print_value_list("deps", &metadata.deps);
+    print_value_list("capabilities", &metadata.capabilities);
+}
 
-    if metadata.deps.is_empty() {
-        println!("      deps: (none)");
+fn print_metadata(metadata: &ConfigModuleMetadata) {
+    print_optional_field("package", metadata.package.as_deref());
+    print_optional_field("version", metadata.version.as_deref());
+    print_optional_field("path", metadata.path.as_deref());
+    print_optional_field("default_features", metadata.default_features.as_ref());
+
+    print_value_list("features", &metadata.features);
+    print_value_list("deps", &metadata.deps);
+    print_value_list("capabilities", &metadata.capabilities);
+}
+
+fn print_optional_field<T: Display>(label: &str, value: Option<T>) {
+    if let Some(value) = value {
+        println!("      {label}: {value}");
+    }
+}
+
+fn print_value_list<T: Display>(label: &str, values: &[T]) {
+    if values.is_empty() {
+        println!("      {label}: (none)");
     } else {
-        println!("      deps:");
-        for dep in &metadata.deps {
-            println!("        - {dep}");
+        println!("      {label}:");
+        for value in values {
+            println!("        - {value}");
         }
     }
 }
@@ -241,6 +209,7 @@ struct CrateVersion {
 }
 
 async fn fetch_all_crates_io_metadata() -> anyhow::Result<HashMap<&'static str, RegistryMetadata>> {
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
     let client = Client::builder()
         .user_agent("cyberfabric-cli")
         .timeout(Duration::from_secs(10))
@@ -250,7 +219,12 @@ async fn fetch_all_crates_io_metadata() -> anyhow::Result<HashMap<&'static str, 
     let mut join_set = tokio::task::JoinSet::new();
     for module in SYSTEM_REGISTRY_MODULES.iter().copied() {
         let cloned_client = client.clone();
+        let permit_pool = semaphore.clone();
         join_set.spawn(async move {
+            let _permit = permit_pool
+                .acquire_owned()
+                .await
+                .context("failed to acquire registry fetch permit")?;
             let metadata = fetch_crates_io_metadata(&cloned_client, module)
                 .await
                 .with_context(|| format!("failed to fetch metadata for '{}'", module.crate_name))?;
@@ -258,7 +232,7 @@ async fn fetch_all_crates_io_metadata() -> anyhow::Result<HashMap<&'static str, 
         });
     }
 
-    let mut metadata_by_crate = HashMap::new();
+    let mut metadata_by_crate = HashMap::with_capacity(join_set.len());
     while let Some(task_result) = join_set.join_next().await {
         let (crate_name, metadata) = task_result.context("registry task panicked")??;
         metadata_by_crate.insert(crate_name, metadata);

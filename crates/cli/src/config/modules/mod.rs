@@ -124,11 +124,25 @@ pub(super) fn load_config(path: &Path) -> anyhow::Result<AppConfig> {
     serde_saphyr::from_str(&raw).with_context(|| format!("config not valid at {}", path.display()))
 }
 
+pub(super) fn validate_module_name(module: &str) -> anyhow::Result<()> {
+    if module.is_empty()
+        || !module
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        anyhow::bail!("invalid module name '{module}'. Use only letters, numbers, '-' and '_'");
+    }
+    Ok(())
+}
+
 pub(super) fn save_config(path: &Path, config: &AppConfig) -> anyhow::Result<()> {
     let mut serialized = serde_saphyr::to_string(config).context("failed to serialize config")?;
     if !serialized.ends_with('\n') {
         serialized.push('\n');
     }
-    fs::write(path, serialized)
-        .with_context(|| format!("can't write config file {}", path.display()))
+    let tmp_path = path.with_extension("tmp");
+    fs::write(&tmp_path, serialized)
+        .with_context(|| format!("can't write temp config file {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, path)
+        .with_context(|| format!("can't replace config file {}", path.display()))
 }

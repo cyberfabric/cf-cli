@@ -1,4 +1,6 @@
-use super::{ModulesContext, load_config, resolve_modules_context, save_config};
+use super::{
+    ModulesContext, load_config, resolve_modules_context, save_config, validate_module_name,
+};
 use crate::common::PathConfigArgs;
 use crate::config::app_config::ModuleConfig;
 use anyhow::{Context, bail};
@@ -53,17 +55,6 @@ impl AddArgs {
 
         save_config(&context.config_path, &config)
     }
-}
-
-fn validate_module_name(module: &str) -> anyhow::Result<()> {
-    if module.is_empty()
-        || !module
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-    {
-        bail!("invalid module name '{module}'. Use only letters, numbers, '-' and '_'");
-    }
-    Ok(())
 }
 
 fn discover_local_modules(

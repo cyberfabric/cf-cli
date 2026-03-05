@@ -42,13 +42,14 @@ impl Default for AppConfig {
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
+    #[serde(default = "default_home_dir")]
     pub home_dir: PathBuf,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            home_dir: PathBuf::from(".cyberfabric"),
+            home_dir: default_home_dir(),
         }
     }
 }
@@ -79,7 +80,7 @@ pub fn default_logging_config() -> LoggingConfig {
 pub struct ModuleConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub database: Option<Value>,
-    #[serde(default)]
+    #[serde(default = "default_module_config")]
     pub config: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<ModuleRuntime>,
@@ -91,7 +92,7 @@ impl Default for ModuleConfig {
     fn default() -> Self {
         Self {
             database: None,
-            config: Value::Object(Map::new()),
+            config: default_module_config(),
             runtime: None,
             metadata: None,
         }
@@ -131,4 +132,12 @@ pub enum RuntimeKind {
     #[default]
     Local,
     Oop,
+}
+
+fn default_home_dir() -> PathBuf {
+    PathBuf::from(".cyberfabric")
+}
+
+fn default_module_config() -> Value {
+    Value::Object(Map::new())
 }
