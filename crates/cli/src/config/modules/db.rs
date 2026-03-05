@@ -50,7 +50,7 @@ impl AddArgs {
         let mut config = load_config(&context.config_path)?;
         if !config.modules.contains_key(&self.module) {
             bail!(
-                "module '{}' not found in {}; use `config mod add` first or pass --create",
+                "module '{}' not found in {}; use `config mod add` first",
                 self.module,
                 context.config_path.display()
             );
