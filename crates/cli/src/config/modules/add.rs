@@ -24,7 +24,7 @@ pub struct AddArgs {
     #[arg(long)]
     default_features: Option<bool>,
     /// Feature to include in metadata (repeatable)
-    #[arg(long = "feature")]
+    #[arg(short = 'F', long = "feature", value_delimiter = ',')]
     features: Vec<String>,
     /// Dependency name to include in metadata.deps (repeatable)
     #[arg(long = "dep")]
@@ -37,21 +37,20 @@ impl AddArgs {
         let context = resolve_modules_context(&self.path_config)?;
 
         let mut config = load_config(&context.config_path)?;
-        if config.modules.contains_key(&self.module) {
-            let module = &self.module;
-            bail!("module '{module}' already exists in modules section");
-        }
-
         let local_modules = discover_local_modules(&context, self)?;
         let metadata = build_required_metadata(self, local_modules.get(&self.module))?;
 
-        config.modules.insert(
-            self.module.clone(),
-            ModuleConfig {
-                metadata: Some(metadata),
-                ..ModuleConfig::default()
-            },
-        );
+        if let Some(existing) = config.modules.get_mut(&self.module) {
+            existing.metadata = Some(metadata);
+        } else {
+            config.modules.insert(
+                self.module.clone(),
+                ModuleConfig {
+                    metadata: Some(metadata),
+                    ..ModuleConfig::default()
+                },
+            );
+        }
 
         save_config(&context.config_path, &config)
     }

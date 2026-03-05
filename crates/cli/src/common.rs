@@ -1,7 +1,8 @@
 use anyhow::{Context, bail};
 use clap::Args;
 use module_parser::{
-    CargoToml, CargoTomlDependencies, CargoTomlDependency, Config, get_module_name_from_crate,
+    CargoToml, CargoTomlDependencies, CargoTomlDependency, Config, ConfigModuleMetadata,
+    get_module_name_from_crate,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -120,7 +121,8 @@ pub fn get_config(path: &Path, config_path: &Path) -> anyhow::Result<Config> {
 
     config.modules.iter_mut().for_each(|module| {
         if let Some(module_metadata) = members.remove(module.0.as_str()) {
-            module.1.metadata = module_metadata.metadata;
+            let config_metadata = std::mem::take(&mut module.1.metadata);
+            module.1.metadata = merge_module_metadata(config_metadata, module_metadata.metadata);
         } else {
             eprintln!(
                 "info: config module '{}' not found locally, retrieving it from the registry",
@@ -135,6 +137,29 @@ pub fn get_config(path: &Path, config_path: &Path) -> anyhow::Result<Config> {
 fn get_config_from_path(path: &Path) -> anyhow::Result<Config> {
     let config = fs::File::open(path).context("config not available")?;
     serde_saphyr::from_reader(config).context("config not valid")
+}
+
+fn merge_module_metadata(
+    config_metadata: ConfigModuleMetadata,
+    local_metadata: ConfigModuleMetadata,
+) -> ConfigModuleMetadata {
+    let features = if config_metadata.features.is_empty() {
+        local_metadata.features
+    } else {
+        config_metadata.features
+    };
+
+    ConfigModuleMetadata {
+        package: config_metadata.package.or(local_metadata.package),
+        version: config_metadata.version.or(local_metadata.version),
+        features,
+        default_features: config_metadata
+            .default_features
+            .or(local_metadata.default_features),
+        path: config_metadata.path.or(local_metadata.path),
+        deps: local_metadata.deps,
+        capabilities: local_metadata.capabilities,
+    }
 }
 
 fn create_features() -> HashMap<String, Vec<String>> {
@@ -244,4 +269,41 @@ fn prepare_cargo_server_main(
         "dependencies": dependencies,
         "config_path": config_path,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_module_metadata;
+    use module_parser::{Capability, ConfigModuleMetadata};
+
+    #[test]
+    fn merge_module_metadata_preserves_config_overrides() {
+        let config_metadata = ConfigModuleMetadata {
+            package: None,
+            version: None,
+            features: vec!["grpc".to_owned(), "otel".to_owned()],
+            default_features: Some(false),
+            path: Some("modules/custom-path".to_owned()),
+            deps: vec![],
+            capabilities: vec![],
+        };
+        let local_metadata = ConfigModuleMetadata {
+            package: Some("cf-demo".to_owned()),
+            version: Some("0.5.0".to_owned()),
+            features: vec![],
+            default_features: None,
+            path: Some("modules/demo".to_owned()),
+            deps: vec!["authz".to_owned()],
+            capabilities: vec![Capability::Grpc],
+        };
+
+        let merged = merge_module_metadata(config_metadata, local_metadata);
+        assert_eq!(merged.package.as_deref(), Some("cf-demo"));
+        assert_eq!(merged.version.as_deref(), Some("0.5.0"));
+        assert_eq!(merged.features, vec!["grpc", "otel"]);
+        assert_eq!(merged.default_features, Some(false));
+        assert_eq!(merged.path.as_deref(), Some("modules/custom-path"));
+        assert_eq!(merged.deps, vec!["authz"]);
+        assert_eq!(merged.capabilities, vec![Capability::Grpc]);
+    }
 }

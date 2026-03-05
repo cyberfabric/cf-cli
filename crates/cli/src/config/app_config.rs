@@ -1,8 +1,10 @@
+use clap::{Args, ValueEnum};
 use module_parser::ConfigModuleMetadata;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// Main application configuration with strongly-typed global sections
 /// and a flexible per-module configuration bag.
@@ -11,16 +13,16 @@ pub struct AppConfig {
     /// Core server configuration.
     pub server: ServerConfig,
     /// Typed database configuration (optional).
-    #[serde(default)]
-    pub database: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database: Option<GlobalDatabaseConfig>,
     /// Logging configuration.
     #[serde(default = "default_logging_config")]
     pub logging: LoggingConfig,
     /// Tracing configuration.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tracing: Option<Value>,
-    /// Directory containing per-module YAML files (optional).
     #[serde(default)]
+    pub tracing: TracingConfig,
+    /// Directory containing per-module YAML files (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modules_dir: Option<String>,
     /// Per-module configuration bag: `module_name` -> module config.
     #[serde(default)]
@@ -33,7 +35,7 @@ impl Default for AppConfig {
             server: ServerConfig::default(),
             database: None,
             logging: default_logging_config(),
-            tracing: None,
+            tracing: TracingConfig::default(),
             modules_dir: None,
             modules: BTreeMap::new(),
         }
@@ -79,7 +81,7 @@ pub fn default_logging_config() -> LoggingConfig {
 #[derive(Clone, Deserialize, Serialize)]
 pub struct ModuleConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub database: Option<Value>,
+    pub database: Option<DbConnConfig>,
     #[serde(default = "default_module_config")]
     pub config: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,7 +107,7 @@ pub struct ModuleRuntime {
     #[serde(default, rename = "type")]
     pub mod_type: RuntimeKind,
     /// Execution configuration for `OoP` modules.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<ExecutionConfig>,
 }
 
@@ -118,7 +120,7 @@ pub struct ExecutionConfig {
     #[serde(default)]
     pub args: Vec<String>,
     /// Working directory for the process (optional, defaults to current dir).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
     /// Environment variables to set for the process.
     #[serde(default)]
@@ -139,5 +141,306 @@ fn default_home_dir() -> PathBuf {
 }
 
 fn default_module_config() -> Value {
-    Value::Object(Map::new())
+    Value::Object(Map::default())
+}
+
+/// Global database configuration with server-based DBs.
+#[derive(Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct GlobalDatabaseConfig {
+    /// Server-based DBs (postgres/mysql/sqlite/etc.), keyed by server name.
+    #[serde(default)]
+    pub servers: BTreeMap<String, DbConnConfig>,
+    /// Optional dev-only flag to auto-provision DB/schema when missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_provision: Option<bool>,
+}
+
+/// Reusable DB connection config for both global servers and modules.
+#[derive(Clone, Deserialize, Serialize, Default, Args)]
+#[serde(deny_unknown_fields)]
+pub struct DbConnConfig {
+    /// Explicit database engine for this connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long, value_enum)]
+    pub engine: Option<DbEngineCfg>,
+    /// DSN-style (full, valid). Optional: can be absent and rely on fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
+    pub dsn: Option<String>,
+    /// Field-based style; any of these override DSN parts when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
+    pub user: Option<String>,
+    /// Literal password or `${VAR}` for env expansion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
+    pub dbname: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long = "params", value_parser = parse_params_map)]
+    pub params: Option<BTreeMap<String, String>>,
+    /// `SQLite` file-based helpers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long = "sqlite-file")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(id = "db_path", long = "sqlite-path", value_name = "PATH")]
+    pub path: Option<PathBuf>,
+    /// Connection pool overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[command(flatten)]
+    pub pool: Option<PoolCfg>,
+    /// Reference to a global server by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
+    pub server: Option<String>,
+}
+
+/// Serializable engine selector for configuration.
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq, ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum DbEngineCfg {
+    Postgres,
+    Mysql,
+    Sqlite,
+}
+
+/// Connection pool configuration.
+#[derive(Clone, Deserialize, Serialize, Default, Args)]
+#[serde(deny_unknown_fields)]
+pub struct PoolCfg {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long = "pool-max-conns")]
+    pub max_conns: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long = "pool-min-conns")]
+    pub min_conns: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long = "pool-acquire-timeout-secs", value_parser = parse_duration_secs)]
+    pub acquire_timeout: Option<Duration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long = "pool-idle-timeout-secs", value_parser = parse_duration_secs)]
+    pub idle_timeout: Option<Duration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long = "pool-max-lifetime-secs", value_parser = parse_duration_secs)]
+    pub max_lifetime: Option<Duration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long = "pool-test-before-acquire")]
+    pub test_before_acquire: Option<bool>,
+}
+
+impl DbConnConfig {
+    #[must_use]
+    pub fn has_any_value(&self) -> bool {
+        self.engine.is_some()
+            || self.dsn.is_some()
+            || self.host.is_some()
+            || self.port.is_some()
+            || self.user.is_some()
+            || self.password.is_some()
+            || self.dbname.is_some()
+            || self
+                .params
+                .as_ref()
+                .is_some_and(|params| !params.is_empty())
+            || self.file.is_some()
+            || self.path.is_some()
+            || self.server.is_some()
+            || self.pool.as_ref().is_some_and(PoolCfg::has_any_value)
+    }
+
+    pub fn apply_patch(&mut self, patch: Self) {
+        if let Some(engine) = patch.engine {
+            self.engine = Some(engine);
+        }
+        if let Some(dsn) = patch.dsn {
+            self.dsn = Some(dsn);
+        }
+        if let Some(host) = patch.host {
+            self.host = Some(host);
+        }
+        if let Some(port) = patch.port {
+            self.port = Some(port);
+        }
+        if let Some(user) = patch.user {
+            self.user = Some(user);
+        }
+        if let Some(password) = patch.password {
+            self.password = Some(password);
+        }
+        if let Some(dbname) = patch.dbname {
+            self.dbname = Some(dbname);
+        }
+        if let Some(params) = patch.params {
+            self.params.get_or_insert_with(BTreeMap::new).extend(params);
+        }
+        if let Some(file) = patch.file {
+            self.file = Some(file);
+        }
+        if let Some(path) = patch.path {
+            self.path = Some(path);
+        }
+        if let Some(server) = patch.server {
+            self.server = Some(server);
+        }
+
+        if let Some(pool_patch) = patch.pool.filter(PoolCfg::has_any_value) {
+            self.pool
+                .get_or_insert_with(PoolCfg::default)
+                .apply_patch(&pool_patch);
+        }
+    }
+}
+
+impl PoolCfg {
+    #[must_use]
+    pub const fn has_any_value(&self) -> bool {
+        self.max_conns.is_some()
+            || self.min_conns.is_some()
+            || self.acquire_timeout.is_some()
+            || self.idle_timeout.is_some()
+            || self.max_lifetime.is_some()
+            || self.test_before_acquire.is_some()
+    }
+
+    pub const fn apply_patch(&mut self, patch: &Self) {
+        if let Some(max_conns) = patch.max_conns {
+            self.max_conns = Some(max_conns);
+        }
+        if let Some(min_conns) = patch.min_conns {
+            self.min_conns = Some(min_conns);
+        }
+        if let Some(acquire_timeout) = patch.acquire_timeout {
+            self.acquire_timeout = Some(acquire_timeout);
+        }
+        if let Some(idle_timeout) = patch.idle_timeout {
+            self.idle_timeout = Some(idle_timeout);
+        }
+        if let Some(max_lifetime) = patch.max_lifetime {
+            self.max_lifetime = Some(max_lifetime);
+        }
+        if let Some(test_before_acquire) = patch.test_before_acquire {
+            self.test_before_acquire = Some(test_before_acquire);
+        }
+    }
+}
+
+fn parse_params_map(raw: &str) -> Result<BTreeMap<String, String>, String> {
+    let mut params = BTreeMap::new();
+    for pair in raw.split(',') {
+        let (key, value) = pair
+            .split_once('=')
+            .ok_or_else(|| format!("invalid key=value pair '{pair}'"))?;
+        if key.trim().is_empty() {
+            return Err(format!("invalid key=value pair '{pair}'"));
+        }
+        params.insert(key.to_owned(), value.to_owned());
+    }
+
+    if params.is_empty() {
+        return Err("params cannot be empty".to_owned());
+    }
+
+    Ok(params)
+}
+
+fn parse_duration_secs(raw: &str) -> Result<Duration, String> {
+    raw.parse::<u64>()
+        .map(Duration::from_secs)
+        .map_err(|_| format!("invalid duration seconds '{raw}'"))
+}
+
+/// Tracing configuration for OpenTelemetry distributed tracing.
+#[derive(Clone, Deserialize, Serialize, Default)]
+pub struct TracingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exporter: Option<Exporter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampler: Option<Sampler>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub propagation: Option<Propagation>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resource: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<HttpOpts>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logs_correlation: Option<LogsCorrelation>,
+    #[serde(default)]
+    pub metrics: MetricsConfig,
+}
+
+/// Metrics configuration for OpenTelemetry metrics collection.
+#[derive(Clone, Deserialize, Serialize, Default)]
+pub struct MetricsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub exporter: Exporter,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cardinality_limit: Option<usize>,
+}
+
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExporterKind {
+    #[default]
+    OtlpGrpc,
+    OtlpHttp,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+pub struct Exporter {
+    #[serde(default)]
+    pub kind: ExporterKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Sampler {
+    ParentBasedAlwaysOn {},
+    ParentBasedRatio {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ratio: Option<f64>,
+    },
+    AlwaysOn {},
+    AlwaysOff {},
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct Propagation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub w3c_trace_context: Option<bool>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct HttpOpts {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inject_request_id_header: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_headers: Option<Vec<String>>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct LogsCorrelation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inject_trace_ids_into_logs: Option<bool>,
 }

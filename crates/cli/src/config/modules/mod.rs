@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 mod add;
+mod db;
 mod list;
 mod remove;
 
@@ -88,8 +89,10 @@ pub struct ModulesArgs {
 pub enum ModulesCommand {
     /// List available system crates
     List(list::ListArgs),
-    /// Add a module to the modules section
+    /// Add or update a module in the modules section (upsert)
     Add(add::AddArgs),
+    /// Manage module-level database config
+    Db(db::ModuleDbArgs),
     /// Remove a module from the modules section
     Rm(remove::RemoveArgs),
 }
@@ -104,6 +107,7 @@ impl ModulesArgs {
         match &self.command {
             ModulesCommand::List(args) => args.run(),
             ModulesCommand::Add(args) => args.run(),
+            ModulesCommand::Db(args) => args.run(),
             ModulesCommand::Rm(args) => args.run(),
         }
     }
