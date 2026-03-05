@@ -1,8 +1,10 @@
 use super::{load_config, resolve_modules_context, save_config, validate_module_name};
 use crate::common::PathConfigArgs;
-use crate::config::app_config::DbConnConfig;
+use crate::config::app_config::{AppConfig, DbConnConfig, ModuleConfig};
+use crate::config::ensure_conn_payload;
 use anyhow::{Context, bail};
 use clap::{Args, Subcommand};
+use std::path::Path;
 
 #[derive(Args)]
 pub struct ModuleDbArgs {
@@ -42,12 +44,18 @@ struct AddArgs {
 
 impl AddArgs {
     fn run(&self) -> anyhow::Result<()> {
-        validate_module_name(&self.module)?;
-        ensure_conn_payload(&self.conn)?;
+        validate_module_db_payload(&self.module, &self.conn)?;
 
         let context = resolve_modules_context(&self.path_config)?;
         let mut config = load_config(&context.config_path)?;
-        let module_cfg = config.modules.entry(self.module.clone()).or_default();
+        if !config.modules.contains_key(&self.module) {
+            bail!(
+                "module '{}' not found in {}; use `config mod add` first or pass --create",
+                self.module,
+                context.config_path.display()
+            );
+        }
+        let module_cfg = get_module_cfg_mut(&mut config, &self.module, &context.config_path)?;
         if let Some(existing) = module_cfg.database.as_mut() {
             existing.apply_patch(self.conn.clone());
         } else {
@@ -69,18 +77,11 @@ struct EditArgs {
 
 impl EditArgs {
     fn run(&self) -> anyhow::Result<()> {
-        validate_module_name(&self.module)?;
-        ensure_conn_payload(&self.conn)?;
+        validate_module_db_payload(&self.module, &self.conn)?;
 
         let context = resolve_modules_context(&self.path_config)?;
         let mut config = load_config(&context.config_path)?;
-        let module_cfg = config.modules.get_mut(&self.module).with_context(|| {
-            format!(
-                "module '{}' not found in {}",
-                self.module,
-                context.config_path.display()
-            )
-        })?;
+        let module_cfg = get_module_cfg_mut(&mut config, &self.module, &context.config_path)?;
         let db_cfg = module_cfg.database.as_mut().with_context(|| {
             format!(
                 "module '{}' has no database config; use `config mod db add` first",
@@ -107,13 +108,7 @@ impl RemoveArgs {
 
         let context = resolve_modules_context(&self.path_config)?;
         let mut config = load_config(&context.config_path)?;
-        let module_cfg = config.modules.get_mut(&self.module).with_context(|| {
-            format!(
-                "module '{}' not found in {}",
-                self.module,
-                context.config_path.display()
-            )
-        })?;
+        let module_cfg = get_module_cfg_mut(&mut config, &self.module, &context.config_path)?;
         if module_cfg.database.take().is_none() {
             let module = &self.module;
             bail!("module '{module}' has no database config");
@@ -123,9 +118,18 @@ impl RemoveArgs {
     }
 }
 
-fn ensure_conn_payload(conn: &DbConnConfig) -> anyhow::Result<()> {
-    if conn.has_any_value() {
-        return Ok(());
-    }
-    bail!("no database fields provided");
+fn get_module_cfg_mut<'a>(
+    config: &'a mut AppConfig,
+    module: &str,
+    config_path: &Path,
+) -> anyhow::Result<&'a mut ModuleConfig> {
+    config
+        .modules
+        .get_mut(module)
+        .with_context(|| format!("module '{module}' not found in {}", config_path.display()))
+}
+
+fn validate_module_db_payload(module: &str, conn: &DbConnConfig) -> anyhow::Result<()> {
+    validate_module_name(module)?;
+    ensure_conn_payload(conn)
 }

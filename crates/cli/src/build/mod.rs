@@ -10,19 +10,9 @@ pub struct BuildArgs {
 
 impl BuildArgs {
     pub fn run(&self) -> anyhow::Result<()> {
-        let path = self
+        let (path, config_path) = self
             .build_run_args
-            .path_config
-            .path
-            .canonicalize()
-            .context("can't canonicalize workspace")?;
-
-        let config_path = self
-            .build_run_args
-            .path_config
-            .resolve_config_with_default(std::path::Path::new("./cyberfabric.yaml"))
-            .canonicalize()
-            .context("can't canonicalize config")?;
+            .resolve_workspace_and_config(std::path::Path::new(common::DEFAULT_CONFIG_FILE))?;
 
         let dependencies = common::get_config(&path, &config_path)?.create_dependencies()?;
         common::generate_server_structure(&path, &config_path, &dependencies)?;

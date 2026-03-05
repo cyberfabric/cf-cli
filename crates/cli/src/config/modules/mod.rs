@@ -1,9 +1,7 @@
-use super::app_config::AppConfig;
+use super::{load_config, save_config, validate_name};
 use crate::common::PathConfigArgs;
-use anyhow::Context;
 use clap::{Args, Subcommand};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 mod add;
 mod db;
@@ -92,7 +90,7 @@ pub enum ModulesCommand {
     /// Add or update a module in the modules section (upsert)
     Add(add::AddArgs),
     /// Manage module-level database config
-    Db(db::ModuleDbArgs),
+    Db(Box<db::ModuleDbArgs>),
     /// Remove a module from the modules section
     Rm(remove::RemoveArgs),
 }
@@ -122,31 +120,6 @@ pub(super) fn resolve_modules_context(
     })
 }
 
-pub(super) fn load_config(path: &Path) -> anyhow::Result<AppConfig> {
-    let raw = fs::read_to_string(path)
-        .with_context(|| format!("can't read config file {}", path.display()))?;
-    serde_saphyr::from_str(&raw).with_context(|| format!("config not valid at {}", path.display()))
-}
-
 pub(super) fn validate_module_name(module: &str) -> anyhow::Result<()> {
-    if module.is_empty()
-        || !module
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-    {
-        anyhow::bail!("invalid module name '{module}'. Use only letters, numbers, '-' and '_'");
-    }
-    Ok(())
-}
-
-pub(super) fn save_config(path: &Path, config: &AppConfig) -> anyhow::Result<()> {
-    let mut serialized = serde_saphyr::to_string(config).context("failed to serialize config")?;
-    if !serialized.ends_with('\n') {
-        serialized.push('\n');
-    }
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, serialized)
-        .with_context(|| format!("can't write temp config file {}", tmp_path.display()))?;
-    fs::rename(&tmp_path, path)
-        .with_context(|| format!("can't replace config file {}", path.display()))
+    validate_name(module, "module")
 }

@@ -340,7 +340,9 @@ fn parse_params_map(raw: &str) -> Result<BTreeMap<String, String>, String> {
         let (key, value) = pair
             .split_once('=')
             .ok_or_else(|| format!("invalid key=value pair '{pair}'"))?;
-        if key.trim().is_empty() {
+        let key = key.trim();
+        let value = value.trim();
+        if key.is_empty() {
             return Err(format!("invalid key=value pair '{pair}'"));
         }
         params.insert(key.to_owned(), value.to_owned());

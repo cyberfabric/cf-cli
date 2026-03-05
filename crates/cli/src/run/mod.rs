@@ -1,8 +1,7 @@
 mod run_loop;
 
-use crate::common::BuildRunArgs;
+use crate::common::{BuildRunArgs, DEFAULT_CONFIG_FILE};
 use crate::run::run_loop::RunSignal;
-use anyhow::Context;
 use clap::Args;
 
 #[derive(Args)]
@@ -16,19 +15,9 @@ pub struct RunArgs {
 
 impl RunArgs {
     pub fn run(&self) -> anyhow::Result<()> {
-        let path = self
+        let (path, config_path) = self
             .br_args
-            .path_config
-            .path
-            .canonicalize()
-            .context("can't canonicalize workspace")?;
-
-        let config_path = self
-            .br_args
-            .path_config
-            .resolve_config_with_default(std::path::Path::new("./cyberfabric.yaml"))
-            .canonicalize()
-            .context("can't canonicalize config")?;
+            .resolve_workspace_and_config(std::path::Path::new(DEFAULT_CONFIG_FILE))?;
 
         let rl = run_loop::RunLoop::new(path, config_path);
         run_loop::OTEL.store(self.br_args.otel, std::sync::atomic::Ordering::Relaxed);
