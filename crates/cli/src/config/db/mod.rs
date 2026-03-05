@@ -1,9 +1,8 @@
-use super::app_config::{AppConfig, DbConnConfig};
+use super::app_config::DbConnConfig;
+use super::{ensure_conn_payload, load_config, save_config, validate_name};
 use crate::common::PathConfigArgs;
 use anyhow::{Context, bail};
 use clap::{Args, Subcommand};
-use std::fs;
-use std::path::Path;
 
 #[derive(Args)]
 pub struct DbArgs {
@@ -44,7 +43,7 @@ struct AddArgs {
 impl AddArgs {
     fn run(&self) -> anyhow::Result<()> {
         let config_path = self.path_config.resolve_config_required()?;
-        validate_identifier(&self.name, "server")?;
+        validate_name(&self.name, "server")?;
         ensure_conn_payload(&self.conn)?;
 
         let mut config = load_config(&config_path)?;
@@ -73,7 +72,7 @@ struct EditArgs {
 impl EditArgs {
     fn run(&self) -> anyhow::Result<()> {
         let config_path = self.path_config.resolve_config_required()?;
-        validate_identifier(&self.name, "server")?;
+        validate_name(&self.name, "server")?;
         ensure_conn_payload(&self.conn)?;
 
         let mut config = load_config(&config_path)?;
@@ -105,7 +104,7 @@ struct RemoveArgs {
 impl RemoveArgs {
     fn run(&self) -> anyhow::Result<()> {
         let config_path = self.path_config.resolve_config_required()?;
-        validate_identifier(&self.name, "server")?;
+        validate_name(&self.name, "server")?;
 
         let mut config = load_config(&config_path)?;
         let Some(database) = config.database.as_mut() else {
@@ -123,40 +122,4 @@ impl RemoveArgs {
 
         save_config(&config_path, &config)
     }
-}
-
-fn ensure_conn_payload(conn: &DbConnConfig) -> anyhow::Result<()> {
-    if conn.has_any_value() {
-        return Ok(());
-    }
-    bail!("no database fields provided");
-}
-
-fn load_config(path: &Path) -> anyhow::Result<AppConfig> {
-    let raw = fs::read_to_string(path)
-        .with_context(|| format!("can't read config file {}", path.display()))?;
-    serde_saphyr::from_str(&raw).with_context(|| format!("config not valid at {}", path.display()))
-}
-
-fn save_config(path: &Path, config: &AppConfig) -> anyhow::Result<()> {
-    let mut serialized = serde_saphyr::to_string(config).context("failed to serialize config")?;
-    if !serialized.ends_with('\n') {
-        serialized.push('\n');
-    }
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, serialized)
-        .with_context(|| format!("can't write temp config file {}", tmp_path.display()))?;
-    fs::rename(&tmp_path, path)
-        .with_context(|| format!("can't replace config file {}", path.display()))
-}
-
-fn validate_identifier(value: &str, kind: &str) -> anyhow::Result<()> {
-    if value.is_empty()
-        || !value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-    {
-        bail!("invalid {kind} name '{value}'. Use only letters, numbers, '-' and '_'");
-    }
-    Ok(())
 }

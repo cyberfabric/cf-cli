@@ -2,7 +2,7 @@ use super::{
     ModulesContext, load_config, resolve_modules_context, save_config, validate_module_name,
 };
 use crate::common::PathConfigArgs;
-use crate::config::app_config::ModuleConfig;
+use crate::config::app_config::AppConfig;
 use anyhow::{Context, bail};
 use clap::Args;
 use module_parser::{ConfigModule, ConfigModuleMetadata, get_module_name_from_crate};
@@ -40,19 +40,71 @@ impl AddArgs {
         let local_modules = discover_local_modules(&context, self)?;
         let metadata = build_required_metadata(self, local_modules.get(&self.module))?;
 
-        if let Some(existing) = config.modules.get_mut(&self.module) {
-            existing.metadata = Some(metadata);
-        } else {
-            config.modules.insert(
-                self.module.clone(),
-                ModuleConfig {
-                    metadata: Some(metadata),
-                    ..ModuleConfig::default()
-                },
-            );
-        }
+        upsert_module_config(&mut config, self, metadata);
 
         save_config(&context.config_path, &config)
+    }
+}
+
+fn upsert_module_config(config: &mut AppConfig, args: &AddArgs, incoming: ConfigModuleMetadata) {
+    let module_config = config.modules.entry(args.module.clone()).or_default();
+    let merged_metadata = if let Some(existing) = module_config.metadata.take() {
+        merge_module_metadata(existing, incoming, args)
+    } else {
+        incoming
+    };
+    module_config.metadata = Some(merged_metadata);
+}
+
+fn merge_module_metadata(
+    existing: ConfigModuleMetadata,
+    incoming: ConfigModuleMetadata,
+    args: &AddArgs,
+) -> ConfigModuleMetadata {
+    let features = if args.features.is_empty() {
+        if existing.features.is_empty() {
+            incoming.features
+        } else {
+            existing.features
+        }
+    } else {
+        incoming.features
+    };
+
+    let deps = if args.deps.is_empty() {
+        if existing.deps.is_empty() {
+            incoming.deps
+        } else {
+            existing.deps
+        }
+    } else {
+        incoming.deps
+    };
+
+    ConfigModuleMetadata {
+        package: if args.package.is_some() {
+            incoming.package
+        } else {
+            existing.package.or(incoming.package)
+        },
+        version: if args.module_version.is_some() {
+            incoming.version
+        } else {
+            existing.version.or(incoming.version)
+        },
+        features,
+        default_features: if args.default_features.is_some() {
+            incoming.default_features
+        } else {
+            existing.default_features.or(incoming.default_features)
+        },
+        path: existing.path.or(incoming.path),
+        deps,
+        capabilities: if existing.capabilities.is_empty() {
+            incoming.capabilities
+        } else {
+            existing.capabilities
+        },
     }
 }
 
@@ -133,9 +185,10 @@ fn validate_required_metadata(
 
 #[cfg(test)]
 mod tests {
-    use super::{AddArgs, build_required_metadata};
+    use super::{AddArgs, build_required_metadata, upsert_module_config};
     use crate::common::PathConfigArgs;
-    use module_parser::{ConfigModule, ConfigModuleMetadata};
+    use crate::config::app_config::{AppConfig, ModuleConfig};
+    use module_parser::{Capability, ConfigModule, ConfigModuleMetadata};
     use std::path::PathBuf;
 
     #[test]
@@ -185,9 +238,8 @@ mod tests {
             deps: vec![],
         };
 
-        let err = match build_required_metadata(&args, None) {
-            Ok(_) => panic!("should fail"),
-            Err(err) => err,
+        let Err(err) = build_required_metadata(&args, None) else {
+            panic!("should fail");
         };
         assert!(
             err.to_string()
@@ -210,9 +262,8 @@ mod tests {
             deps: vec![],
         };
 
-        let err = match build_required_metadata(&args, None) {
-            Ok(_) => panic!("should fail"),
-            Err(err) => err,
+        let Err(err) = build_required_metadata(&args, None) else {
+            panic!("should fail");
         };
         assert!(
             err.to_string()
@@ -238,5 +289,64 @@ mod tests {
         let metadata = build_required_metadata(&args, None).expect("metadata");
         assert_eq!(metadata.package.as_deref(), Some("cf-demo"));
         assert_eq!(metadata.version.as_deref(), Some("1.2.3"));
+    }
+
+    #[test]
+    fn upsert_module_config_preserves_existing_metadata_when_cli_fields_not_provided() {
+        let mut config = AppConfig::default();
+        config.modules.insert(
+            "demo".to_owned(),
+            ModuleConfig {
+                metadata: Some(ConfigModuleMetadata {
+                    package: Some("cf-demo-existing".to_owned()),
+                    version: Some("9.9.9".to_owned()),
+                    features: vec!["existing-feature".to_owned()],
+                    default_features: Some(false),
+                    path: Some("modules/existing".to_owned()),
+                    deps: vec!["existing-dep".to_owned()],
+                    capabilities: vec![Capability::Grpc],
+                }),
+                ..ModuleConfig::default()
+            },
+        );
+
+        let args = AddArgs {
+            path_config: PathConfigArgs {
+                path: PathBuf::from("."),
+                config: None,
+            },
+            module: "demo".to_owned(),
+            package: None,
+            module_version: None,
+            default_features: None,
+            features: vec![],
+            deps: vec![],
+        };
+
+        let incoming = ConfigModuleMetadata {
+            package: Some("cf-demo-local".to_owned()),
+            version: Some("0.3.0".to_owned()),
+            features: vec!["local-feature".to_owned()],
+            default_features: Some(true),
+            path: None,
+            deps: vec!["local-dep".to_owned()],
+            capabilities: vec![Capability::Rest],
+        };
+
+        upsert_module_config(&mut config, &args, incoming);
+
+        let metadata = &config
+            .modules
+            .get("demo")
+            .and_then(|module| module.metadata.as_ref())
+            .expect("metadata should be present after upsert");
+
+        assert_eq!(metadata.package.as_deref(), Some("cf-demo-existing"));
+        assert_eq!(metadata.version.as_deref(), Some("9.9.9"));
+        assert_eq!(metadata.features, vec!["existing-feature"]);
+        assert_eq!(metadata.default_features, Some(false));
+        assert_eq!(metadata.path.as_deref(), Some("modules/existing"));
+        assert_eq!(metadata.deps, vec!["existing-dep"]);
+        assert_eq!(metadata.capabilities, vec![Capability::Grpc]);
     }
 }

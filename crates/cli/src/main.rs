@@ -21,7 +21,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Mod(r#mod::ModArgs),
-    Config(config::ConfigArgs),
+    Config(Box<config::ConfigArgs>),
     Lint(lint::LintArgs),
     Test(test::TestArgs),
     Tools(tools::ToolsArgs),

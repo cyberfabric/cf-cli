@@ -53,7 +53,29 @@ pub struct BuildRunArgs {
     pub release: bool,
 }
 
+impl BuildRunArgs {
+    pub fn resolve_workspace_and_config(
+        &self,
+        default_config: &Path,
+    ) -> anyhow::Result<(PathBuf, PathBuf)> {
+        let path = self
+            .path_config
+            .path
+            .canonicalize()
+            .context("can't canonicalize workspace")?;
+
+        let config_path = self
+            .path_config
+            .resolve_config_with_default(default_config)
+            .canonicalize()
+            .context("can't canonicalize config")?;
+
+        Ok((path, config_path))
+    }
+}
+
 pub const BASE_PATH: &str = ".cyberfabric";
+pub const DEFAULT_CONFIG_FILE: &str = "./cyberfabric.yaml";
 
 const CARGO_CONFIG_TOML: &str = r#"[build]
 target-dir = "../target"
