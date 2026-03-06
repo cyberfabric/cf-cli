@@ -406,6 +406,7 @@ dependencies = [
  "module-parser",
  "notify",
  "reqwest",
+ "semver",
  "serde",
  "serde-saphyr",
  "serde_json",
