@@ -1,6 +1,6 @@
 mod run_loop;
 
-use crate::common::{BuildRunArgs, DEFAULT_CONFIG_FILE};
+use crate::common::BuildRunArgs;
 use crate::run::run_loop::RunSignal;
 use clap::Args;
 
@@ -15,9 +15,7 @@ pub struct RunArgs {
 
 impl RunArgs {
     pub fn run(&self) -> anyhow::Result<()> {
-        let (path, config_path) = self
-            .br_args
-            .resolve_workspace_and_config(std::path::Path::new(DEFAULT_CONFIG_FILE))?;
+        let (path, config_path) = self.br_args.resolve_workspace_and_config()?;
 
         let rl = run_loop::RunLoop::new(path, config_path);
         run_loop::OTEL.store(self.br_args.otel, std::sync::atomic::Ordering::Relaxed);

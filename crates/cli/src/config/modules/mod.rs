@@ -115,8 +115,8 @@ pub(super) fn resolve_modules_context(
     path_config: &PathConfigArgs,
 ) -> anyhow::Result<ModulesContext> {
     Ok(ModulesContext {
-        workspace_path: path_config.path.clone(),
-        config_path: path_config.resolve_config_required()?,
+        workspace_path: path_config.resolve_path()?,
+        config_path: path_config.resolve_config()?,
     })
 }
 

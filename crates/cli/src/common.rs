@@ -1,4 +1,4 @@
-use anyhow::{Context, bail};
+use anyhow::Context;
 use clap::Args;
 use module_parser::{
     CargoToml, CargoTomlDependencies, CargoTomlDependency, Config, ConfigModuleMetadata,
@@ -11,33 +11,25 @@ use std::process::Command;
 
 #[derive(Args)]
 pub struct PathConfigArgs {
-    /// Path to the module
+    /// Path to the module workspace root
     #[arg(short = 'p', long, default_value = ".")]
     pub path: PathBuf,
     /// Path to the config file
     #[arg(short = 'c', long)]
-    pub config: Option<PathBuf>,
+    pub config: PathBuf,
 }
 
 impl PathConfigArgs {
-    pub fn resolve_config_required(&self) -> anyhow::Result<PathBuf> {
-        let Some(config) = &self.config else {
-            bail!("missing required argument '--config <CONFIG>'");
-        };
-        Ok(self.resolve_config_from(config))
+    pub fn resolve_config(&self) -> anyhow::Result<PathBuf> {
+        self.config
+            .canonicalize()
+            .context("can't canonicalize config")
     }
 
-    pub fn resolve_config_with_default(&self, default_config: &Path) -> PathBuf {
-        let config = self.config.as_deref().unwrap_or(default_config);
-        self.resolve_config_from(config)
-    }
-
-    fn resolve_config_from(&self, config: &Path) -> PathBuf {
-        if config.is_absolute() {
-            config.to_path_buf()
-        } else {
-            self.path.join(config)
-        }
+    pub fn resolve_path(&self) -> anyhow::Result<PathBuf> {
+        self.path
+            .canonicalize()
+            .context("can't canonicalize workspace path")
     }
 }
 
@@ -54,28 +46,15 @@ pub struct BuildRunArgs {
 }
 
 impl BuildRunArgs {
-    pub fn resolve_workspace_and_config(
-        &self,
-        default_config: &Path,
-    ) -> anyhow::Result<(PathBuf, PathBuf)> {
-        let path = self
-            .path_config
-            .path
-            .canonicalize()
-            .context("can't canonicalize workspace")?;
-
-        let config_path = self
-            .path_config
-            .resolve_config_with_default(default_config)
-            .canonicalize()
-            .context("can't canonicalize config")?;
+    pub fn resolve_workspace_and_config(&self) -> anyhow::Result<(PathBuf, PathBuf)> {
+        let path = self.path_config.resolve_path()?;
+        let config_path = self.path_config.resolve_config()?;
 
         Ok((path, config_path))
     }
 }
 
 pub const BASE_PATH: &str = ".cyberfabric";
-pub const DEFAULT_CONFIG_FILE: &str = "./cyberfabric.yaml";
 
 const CARGO_CONFIG_TOML: &str = r#"[build]
 target-dir = "../target"

@@ -42,7 +42,7 @@ struct AddArgs {
 
 impl AddArgs {
     fn run(&self) -> anyhow::Result<()> {
-        let config_path = self.path_config.resolve_config_required()?;
+        let config_path = self.path_config.resolve_config()?;
         validate_name(&self.name, "server")?;
         ensure_conn_payload(&self.conn)?;
 
@@ -71,7 +71,7 @@ struct EditArgs {
 
 impl EditArgs {
     fn run(&self) -> anyhow::Result<()> {
-        let config_path = self.path_config.resolve_config_required()?;
+        let config_path = self.path_config.resolve_config()?;
         validate_name(&self.name, "server")?;
         ensure_conn_payload(&self.conn)?;
 
@@ -103,7 +103,7 @@ struct RemoveArgs {
 
 impl RemoveArgs {
     fn run(&self) -> anyhow::Result<()> {
-        let config_path = self.path_config.resolve_config_required()?;
+        let config_path = self.path_config.resolve_config()?;
         validate_name(&self.name, "server")?;
 
         let mut config = load_config(&config_path)?;

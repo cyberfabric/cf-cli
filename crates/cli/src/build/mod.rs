@@ -10,9 +10,7 @@ pub struct BuildArgs {
 
 impl BuildArgs {
     pub fn run(&self) -> anyhow::Result<()> {
-        let (path, config_path) = self
-            .build_run_args
-            .resolve_workspace_and_config(std::path::Path::new(common::DEFAULT_CONFIG_FILE))?;
+        let (path, config_path) = self.build_run_args.resolve_workspace_and_config()?;
 
         let dependencies = common::get_config(&path, &config_path)?.create_dependencies()?;
         common::generate_server_structure(&path, &config_path, &dependencies)?;
