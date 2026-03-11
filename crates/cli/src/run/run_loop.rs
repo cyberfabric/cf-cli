@@ -66,9 +66,15 @@ impl RunLoop {
             .config_path
             .parent()
             .context("config path has no parent directory")?;
+        let workspace_manifest = self.path.join("Cargo.toml");
         watcher
             .watch(config_parent, RecursiveMode::NonRecursive)
             .context("failed to watch config directory")?;
+        if config_parent != self.path.as_path() {
+            watcher
+                .watch(&self.path, RecursiveMode::NonRecursive)
+                .context("failed to watch workspace directory")?;
+        }
 
         // Watch dependency paths that have `path` set
         let mut watched_paths = watch_dependency_paths(&dependencies, &mut watcher, &self.path);
@@ -90,8 +96,15 @@ impl RunLoop {
                         | notify::EventKind::Create(_)
                         | notify::EventKind::Remove(_)
                 );
+            let is_workspace_manifest_change = event.paths.contains(&workspace_manifest)
+                && matches!(
+                    event.kind,
+                    notify::EventKind::Modify(_)
+                        | notify::EventKind::Create(_)
+                        | notify::EventKind::Remove(_)
+                );
 
-            if is_config_change {
+            if is_config_change || is_workspace_manifest_change {
                 match common::get_config(&self.path, &self.config_path)
                     .and_then(module_parser::Config::create_dependencies)
                 {
