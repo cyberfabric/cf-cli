@@ -13,9 +13,9 @@ pub struct ParsedModule {
     pub capabilities: Vec<Capability>,
 }
 
-pub(crate) fn retrieve_module_rs(
+pub fn retrieve_module_rs(
     package: &Package,
-    target: Target,
+    target: &Target,
 ) -> anyhow::Result<(String, ConfigModule)> {
     let lib_rs = PathBuf::from(&target.src_path);
     let src = lib_rs

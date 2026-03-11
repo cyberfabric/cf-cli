@@ -2,12 +2,13 @@ use anyhow::Context;
 use clap::Args;
 use module_parser::{
     CargoToml, CargoTomlDependencies, CargoTomlDependency, Config, ConfigModuleMetadata,
-    get_module_name_from_crate,
+    get_dependencies, get_module_name_from_crate,
 };
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::LazyLock;
 
 #[derive(Args)]
 pub struct PathConfigArgs {
@@ -43,12 +44,18 @@ pub struct BuildRunArgs {
     /// Build/run in release mode
     #[arg(short = 'r', long)]
     pub release: bool,
+    /// Remove Cargo.lock at the start of the execution
+    #[arg(long)]
+    pub clean: bool,
 }
 
 impl BuildRunArgs {
     pub fn resolve_workspace_and_config(&self) -> anyhow::Result<(PathBuf, PathBuf)> {
         let path = self.path_config.resolve_path()?;
         let config_path = self.path_config.resolve_config()?;
+        if self.clean {
+            remove_from_file_structure(&path, "Cargo.lock")?;
+        }
 
         Ok((path, config_path))
     }
@@ -163,73 +170,79 @@ fn merge_module_metadata(
     }
 }
 
-fn create_features() -> HashMap<String, Vec<String>> {
+static FEATURES: LazyLock<HashMap<String, Vec<String>>> = LazyLock::new(|| {
     let mut res = HashMap::with_capacity(2);
     res.insert("default".to_owned(), vec![]);
     res.insert("otel".to_owned(), vec!["modkit/otel".to_owned()]);
     res
-}
+});
 
-fn insert_required_deps(mut dependencies: CargoTomlDependencies) -> CargoTomlDependencies {
-    dependencies.insert(
-        "modkit".to_owned(),
-        CargoTomlDependency {
-            package: Some("cf-modkit".to_owned()),
-            features: vec!["bootstrap".to_owned()],
-            ..Default::default()
-        },
-    );
-    dependencies.insert(
-        "anyhow".to_owned(),
-        CargoTomlDependency {
-            package: Some("anyhow".to_owned()),
-            version: Some("1".to_owned()),
-            ..Default::default()
-        },
-    );
-    dependencies.insert(
-        "tokio".to_owned(),
-        CargoTomlDependency {
-            package: Some("tokio".to_owned()),
-            features: vec!["full".to_owned()],
-            version: Some("1".to_owned()),
-            ..Default::default()
-        },
-    );
-    dependencies.insert(
-        "tracing".to_owned(),
-        CargoTomlDependency {
-            package: Some("tracing".to_owned()),
-            version: Some("0.1".to_owned()),
-            ..Default::default()
-        },
-    );
-    dependencies
+static CARGO_DEPS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
+    let mut res = HashMap::with_capacity(5);
+    res.insert("cf-modkit".to_owned(), "modkit".to_owned());
+    res.insert("modkit".to_owned(), "modkit".to_owned()); // just in case there's a renamed
+    res.insert("anyhow".to_owned(), "anyhow".to_owned());
+    res.insert("tokio".to_owned(), "tokio".to_owned());
+    res.insert("tracing".to_owned(), "tracing".to_owned());
+    res
+});
+
+fn create_required_deps(path: &Path) -> anyhow::Result<CargoTomlDependencies> {
+    let mut deps = get_dependencies(path, &CARGO_DEPS)?;
+    if let Some(modkit) = deps.get_mut("modkit") {
+        modkit.features = vec!["bootstrap".to_owned()];
+    } else {
+        deps.insert(
+            "modkit".to_owned(),
+            CargoTomlDependency {
+                package: Some("cf-modkit".to_owned()),
+                features: vec!["bootstrap".to_owned()],
+                ..Default::default()
+            },
+        );
+    }
+    if let Some(tokio) = deps.get_mut("tokio") {
+        tokio.features = vec!["full".to_owned()];
+    } else {
+        deps.insert(
+            "tokio".to_owned(),
+            CargoTomlDependency {
+                features: vec!["full".to_owned()],
+                version: Some("1".to_owned()),
+                ..Default::default()
+            },
+        );
+    }
+    Ok(deps)
 }
 
 pub fn generate_server_structure(
     path: &Path,
     config_path: &Path,
-    dependencies: &CargoTomlDependencies,
+    current_dependencies: &CargoTomlDependencies,
 ) -> anyhow::Result<()> {
-    let features = create_features();
-
-    let cargo_toml = toml::to_string(&CargoToml {
-        dependencies: insert_required_deps(dependencies.clone()),
-        features,
+    let mut dependencies = current_dependencies.clone();
+    dependencies.extend(create_required_deps(path)?);
+    let cargo_toml = CargoToml {
+        dependencies,
+        features: FEATURES.clone(),
         ..Default::default()
-    })
-    .context("something went wrong when transforming to toml")?;
+    };
+    let cargo_toml_str =
+        toml::to_string(&cargo_toml).context("something went wrong when transforming to toml")?;
     let main_template = liquid::ParserBuilder::with_stdlib()
         .build()?
         .parse(CARGO_SERVER_MAIN)?;
 
-    create_file_structure(path, "Cargo.toml", &cargo_toml)?;
+    create_file_structure(path, "Cargo.toml", &cargo_toml_str)?;
     create_file_structure(path, ".cargo/config.toml", CARGO_CONFIG_TOML)?;
     create_file_structure(
         path,
         "src/main.rs",
-        &main_template.render(&prepare_cargo_server_main(config_path, dependencies))?,
+        &main_template.render(&prepare_cargo_server_main(
+            config_path,
+            &cargo_toml.dependencies,
+        ))?,
     )?;
 
     Ok(())
@@ -252,6 +265,14 @@ fn create_file_structure(path: &Path, relative_path: &str, contents: &str) -> an
         .context("can't create file")?;
     file.write_all(contents.as_bytes())
         .context("can't write to file")
+}
+
+fn remove_from_file_structure(path: &Path, relative_path: &str) -> anyhow::Result<()> {
+    let path = PathBuf::from(path).join(BASE_PATH).join(relative_path);
+    if path.exists() {
+        fs::remove_file(path).context("can't remove file")?;
+    }
+    Ok(())
 }
 
 /// UNC paths are not supported like `\\server\share`, as we replace backslashes with forward slashes.

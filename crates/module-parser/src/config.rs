@@ -11,11 +11,11 @@ pub struct Config {
 impl Config {
     pub fn create_dependencies(self) -> anyhow::Result<CargoTomlDependencies> {
         let mut dependencies = HashMap::with_capacity(self.modules.len());
-        for (name, module) in self.modules.into_iter() {
+        for (name, module) in self.modules {
             let Some(package) = module.metadata.package.clone() else {
                 bail!("module '{name}' doesn't have package associated, please review");
             };
-            let package = package.replace("-", "_");
+            let package = package.replace('-', "_");
             if dependencies.contains_key(&package) {
                 bail!("module '{name}' has duplicate package name '{package}'");
             }
@@ -143,6 +143,7 @@ impl Default for Package {
 mod opt_string_none_as_star {
     use serde::{Deserialize, Deserializer, Serializer};
 
+    #[allow(clippy::ref_option)]
     pub fn serialize<S>(v: &Option<String>, s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -160,8 +161,7 @@ mod opt_string_none_as_star {
         // Accept missing/null as None; accept "*" as None; otherwise Some(value).
         let opt = Option::<String>::deserialize(d)?;
         Ok(match opt.as_deref() {
-            None => None,
-            Some("*") => None,
+            None | Some("*") => None,
             Some(x) => Some(x.to_string()),
         })
     }
