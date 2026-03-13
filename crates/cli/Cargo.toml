@@ -42,3 +42,7 @@ semver = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+module-parser = { workspace = true, features = ["test-utils"] }
