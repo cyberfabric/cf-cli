@@ -1,0 +1,707 @@
+# CyberFabric CLI Skills Guide
+
+This document summarizes the CLI implemented under `crates/cli/src`.
+It focuses on:
+
+- **[command surface]** Every top-level command and nested subcommand
+- **[arguments]** The supported flags and positional arguments
+- **[purpose]** What each command is meant to do
+- **[examples]** Realistic usage patterns
+- **[status]** Which commands are implemented vs currently placeholders
+
+## Invocation Forms
+
+The crate exposes two equivalent entrypoints:
+
+- **[`cyberfabric`]** Direct binary invocation
+- **[`cargo cyberfabric`]** Cargo subcommand form via the `cargo-cyberfabric` binary
+
+Examples:
+
+```bash
+cyberfabric mod init /tmp/my-app
+```
+
+```bash
+cargo cyberfabric mod init /tmp/my-app
+```
+
+For local development in this repo:
+
+```bash
+cargo run -p cli -- mod init /tmp/my-app
+```
+
+## Command Tree
+
+```text
+cyberfabric
+├── mod
+│   ├── init
+│   └── add
+├── config
+│   ├── mod
+│   │   ├── list
+│   │   ├── add
+│   │   ├── db
+│   │   │   ├── add
+│   │   │   ├── edit
+│   │   │   └── rm
+│   │   └── rm
+│   └── db
+│       ├── add
+│       ├── edit
+│       └── rm
+├── docs
+├── lint
+├── test
+├── tools
+├── run
+└── build
+```
+
+## Shared Argument Patterns
+
+- **[`-p, --path <PATH>`]** Workspace root path. Defaults to `.` in most commands that work on a workspace.
+- **[`-c, --config <PATH>`]** Config file path. This is required anywhere `PathConfigArgs` is used because there is no
+  default.
+- **[`-v, --verbose`]** Usually enables more logging or richer output.
+- **[name validation]** Config-managed names for modules and DB servers only allow letters, numbers, `-`, and `_`.
+
+## What the Tool Manages
+
+From the current implementation, the CLI is mainly for:
+
+- **[workspace scaffolding]** Initialize a CyberFabric workspace and add module templates
+- **[config management]** Enable modules and patch YAML config sections
+- **[server generation]** Generate a runnable Cargo project under `.cyberfabric/`
+- **[build/run]** Build or run that generated server
+- **[source inspection]** Resolve Rust source for crates/items through workspace metadata or crates.io
+- **[tool bootstrap]** Install or upgrade `rustup`, `cargofmt`, and `clippy`
+
+## Top-Level Commands
+
+### `mod`
+
+Scaffolds workspace content from templates.
+
+#### `mod init`
+
+Initialize a new project from the default CyberFabric template repo or a local template.
+
+Synopsis:
+
+```bash
+cyberfabric mod init <path> [--verbose] [--local-path <PATH>] [--git <URL>] [--subfolder <NAME>] [--branch <NAME>]
+```
+
+Arguments:
+
+- **[`<path>`]** Target directory to initialize
+- **[`-v, --verbose`]** Verbose output from `cargo-generate`
+- **[`--local-path <PATH>`]** Use a local template directory instead of Git
+- **[`--git <URL>`]** Template Git URL, defaults to `https://github.com/cyberfabric/cf-template-rust`
+- **[`--subfolder <NAME>`]** Template subfolder, defaults to `Init`
+- **[`--branch <NAME>`]** Git branch, defaults to `main`
+
+Behavior:
+
+- **[creates target directory]** If it does not exist
+- **[fails on file path]** Errors if `<path>` already exists and is not a directory
+- **[uses directory name as project name]** The final path segment becomes the generated project name
+- **[forces git init]** Template generation runs with Git initialization enabled
+
+Examples:
+
+```bash
+cyberfabric mod init /tmp/cf-demo
+```
+
+```bash
+cyberfabric mod init /tmp/cf-demo --git https://github.com/cyberfabric/cf-template-rust --branch main --subfolder Init
+```
+
+```bash
+cyberfabric mod init /tmp/cf-demo --local-path ~/dev/cf-template-rust
+```
+
+#### `mod add`
+
+Generate a module template inside an existing workspace's `modules/` directory and wire Cargo workspace dependencies.
+
+Synopsis:
+
+```bash
+cyberfabric mod add [--path <PATH>] [--verbose] [--local-path <PATH>] [--git <URL>] [--subfolder <NAME>] [--branch <NAME>] <template>
+```
+
+Available templates:
+
+- **[`background-worker`]** Background worker module template
+- **[`api-db-handler`]** API/database handler module template
+- **[`rest-gateway`]** REST gateway module template
+
+Arguments:
+
+- **[`<template>`]** One of the three value-enum names above
+- **[`-p, --path <PATH>`]** Workspace root, defaults to `.`
+- **[`-v, --verbose`]** Verbose template generation output
+- **[`--local-path <PATH>`]** Local template root instead of Git
+- **[`--git <URL>`]** Template repo URL, defaults to `https://github.com/cyberfabric/cf-template-rust`
+- **[`--subfolder <NAME>`]** Template subfolder root, defaults to `Modules`
+- **[`--branch <NAME>`]** Template branch, defaults to `main`
+
+Behavior:
+
+- **[requires `modules/`]** Fails unless `<workspace>/modules` already exists
+- **[creates `modules/<template>`]** The generated module name matches the template name
+- **[prevents duplicates]** Fails if that module directory already exists
+- **[updates workspace members]** Adds generated modules to `workspace.members`
+- **[promotes dependencies]** Moves new module dependency source/version metadata into `workspace.dependencies`
+- **[rewrites module Cargo files]** Rewrites module dependencies to `workspace = true`
+- **[inherits workspace lints]** Adds `lints.workspace = true` to generated modules if needed
+- **[includes SDK crate when present]** If the generated module contains `sdk/`, it is also added as a workspace member
+
+Examples:
+
+```bash
+cyberfabric mod add background-worker -p /tmp/cf-demo
+```
+
+```bash
+cyberfabric mod add rest-gateway -p /tmp/cf-demo --verbose
+```
+
+```bash
+cyberfabric mod add api-db-handler -p /tmp/cf-demo --local-path ~/dev/cf-template-rust --subfolder Modules
+```
+
+### `config`
+
+Manages the YAML application config file used by `build` and `run`.
+
+There are two branches:
+
+- **[`config mod ...`]** Module configuration
+- **[`config db ...`]** Global database server configuration
+
+### `config mod`
+
+Manage the `modules` section in the app config.
+
+#### `config mod list`
+
+List workspace modules, configured modules, and optionally known system crates.
+
+Synopsis:
+
+```bash
+cyberfabric config mod list -c <CONFIG> [-p <PATH>] [--system] [--verbose] [--registry <REGISTRY>]
+```
+
+Arguments:
+
+- **[`-c, --config <CONFIG>`]** Required config file path
+- **[`-p, --path <PATH>`]** Workspace root, defaults to `.`
+- **[`-s, --system`]** Also print built-in system registry modules
+- **[`-v, --verbose`]** Print full metadata
+- **[`--registry <REGISTRY>`]** Registry used only for verbose system lookups, defaults to `crates.io`
+
+Behavior:
+
+- **[discovers local modules]** Scans the workspace for module crates
+- **[loads configured modules]** Reads enabled modules from the config file
+- **[marks enabled locals]** Shows when a workspace module is enabled in config
+- **[shows missing locals]** Shows when a configured module is not present in the workspace
+- **[optional crates.io fetch]** If both `--system` and `--verbose` are used, the CLI fetches registry metadata and
+  `src/module.rs` details from crates.io
+- **[registry support]** Only `crates.io` is currently supported
+
+Built-in system module names:
+
+- **[`credstore`]**
+- **[`file-parser`]**
+- **[`api-gateway`]**
+- **[`authn-resolver`]**
+- **[`static-authn-plugin`]**
+- **[`authz-resolver`]**
+- **[`static-authz-plugin`]**
+- **[`grpc-hub`]**
+- **[`module-orchestrator`]**
+- **[`nodes-registry`]**
+- **[`oagw`]**
+- **[`single-tenant-tr-plugin`]**
+- **[`static-tr-plugin`]**
+- **[`tenant-resolver`]**
+- **[`types-registry`]**
+
+Examples:
+
+```bash
+cyberfabric config mod list -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+```
+
+```bash
+cyberfabric config mod list -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --system
+```
+
+```bash
+cyberfabric config mod list -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --system --verbose
+```
+
+#### `config mod add`
+
+Add or update a module entry in the config file's `modules` section.
+
+Synopsis:
+
+```bash
+cyberfabric config mod add -c <CONFIG> [-p <PATH>] [--package <NAME>] [--module-version <VER>] [--default-features <BOOL>] [-F, --feature <FEATURES>]... [--dep <NAME>]... <module>
+```
+
+Arguments:
+
+- **[`<module>`]** Module name in the config
+- **[`-c, --config <CONFIG>`]** Required config file path
+- **[`-p, --path <PATH>`]** Workspace root, defaults to `.`
+- **[`--package <NAME>`]** Override metadata package name
+- **[`--module-version <VER>`]** Override metadata version
+- **[`--default-features <BOOL>`]** Persist Cargo `default_features`
+- **[`-F, --feature <FEATURES>`]** Feature list; accepts comma-separated values and can be repeated
+- **[`--dep <NAME>`]** Metadata dependency name; repeat to add more
+
+Behavior:
+
+- **[upsert]** Creates or updates `modules.<module>`
+- **[local-first discovery]** Tries to discover module metadata from the workspace
+- **[remote module support]** If the module is not local, you must provide both `--package` and `--module-version`
+- **[portable metadata]** Local filesystem paths are intentionally not persisted into config metadata
+- **[merge semantics]** Existing metadata fields are preserved unless you explicitly override them
+- **[metadata requirements]** Package and version are required in the resulting metadata, whether sourced locally or
+  passed explicitly
+
+Examples:
+
+```bash
+cyberfabric config mod add background-worker -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+```
+
+```bash
+cyberfabric config mod add rest-gateway -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml -F json,metrics -F tracing --dep authn-resolver --dep tenant-resolver
+```
+
+```bash
+cyberfabric config mod add credstore -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --package cf-credstore --module-version 0.4.2
+```
+
+```bash
+cyberfabric config mod add api-db-handler -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --default-features false
+```
+
+#### `config mod rm`
+
+Remove a module from the config file's `modules` section.
+
+Synopsis:
+
+```bash
+cyberfabric config mod rm -c <CONFIG> [-p <PATH>] <module>
+```
+
+Behavior:
+
+- **[strict removal]** Fails if the module is not present in config
+
+Example:
+
+```bash
+cyberfabric config mod rm background-worker -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+```
+
+#### `config mod db`
+
+Manage module-level database config under `modules.<module>.database`.
+
+Subcommands:
+
+- **[`add`]** Add or patch a module DB config
+- **[`edit`]** Edit an existing module DB config
+- **[`rm`]** Remove a module DB config
+
+Shared DB flags:
+
+- **[`--engine <postgres|mysql|sqlite>`]**
+- **[`--dsn <DSN>`]**
+- **[`--host <HOST>`]**
+- **[`--port <PORT>`]**
+- **[`--user <USER>`]**
+- **[`--password <PASSWORD>`]**
+- **[`--dbname <NAME>`]**
+- **[`--params <K=V,...>`]**
+- **[`--sqlite-file <FILE>`]**
+- **[`--sqlite-path <PATH>`]**
+- **[`--pool-max-conns <N>`]**
+- **[`--pool-min-conns <N>`]**
+- **[`--pool-acquire-timeout-secs <SECS>`]**
+- **[`--pool-idle-timeout-secs <SECS>`]**
+- **[`--pool-max-lifetime-secs <SECS>`]**
+- **[`--pool-test-before-acquire <BOOL>`]**
+- **[`--server <NAME>`]** Reference a named global DB server
+
+Rules:
+
+- **[payload required]** `add` and `edit` require at least one DB-related field
+- **[module must exist]** `add` requires the module already exist in config and recommends `config mod add` first
+- **[edit requires existing DB config]** `edit` fails if no module DB config exists yet
+- **[patch semantics]** `add` and `edit` patch only the fields you provide
+
+Examples:
+
+```bash
+cyberfabric config mod db add background-worker -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --server primary
+```
+
+```bash
+cyberfabric config mod db add api-db-handler -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --engine postgres --host localhost --port 5432 --user app --password '${DB_PASSWORD}' --dbname appdb --pool-max-conns 20
+```
+
+```bash
+cyberfabric config mod db edit api-db-handler -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --pool-acquire-timeout-secs 30 --pool-test-before-acquire true
+```
+
+```bash
+cyberfabric config mod db rm api-db-handler -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+```
+
+### `config db`
+
+Manage global database server config under `database.servers`.
+
+Subcommands:
+
+- **[`add`]** Add or upsert a named global DB server
+- **[`edit`]** Edit an existing global DB server
+- **[`rm`]** Remove an existing global DB server
+
+Synopsis:
+
+```bash
+cyberfabric config db add  -c <CONFIG> [-p <PATH>] <name> <db-flags...>
+cyberfabric config db edit -c <CONFIG> [-p <PATH>] <name> <db-flags...>
+cyberfabric config db rm   -c <CONFIG> [-p <PATH>] <name>
+```
+
+Behavior:
+
+- **[server name]** Stored under `database.servers.<name>`
+- **[add is upsert]** `add` creates or patches an existing server entry
+- **[edit is strict]** `edit` requires the server to already exist
+- **[payload required]** `add` and `edit` require at least one DB-related field
+- **[cleanup]** `rm` removes the top-level `database` section if it becomes empty and `auto_provision` is unset
+
+Examples:
+
+```bash
+cyberfabric config db add primary -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --engine postgres --host localhost --port 5432 --user app --password '${DB_PASSWORD}' --dbname appdb
+```
+
+```bash
+cyberfabric config db edit primary -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --pool-max-conns 30 --pool-idle-timeout-secs 120
+```
+
+```bash
+cyberfabric config db add local-sqlite -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --engine sqlite --sqlite-path /tmp/cf-demo/dev.db
+```
+
+```bash
+cyberfabric config db rm primary -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+```
+
+### `docs`
+
+Resolve Rust source for a crate/module/item query from local workspace metadata, the local docs cache, or crates.io.
+
+Synopsis:
+
+```bash
+cyberfabric docs [--path <PATH>] [--registry <REGISTRY>] [--verbose] [--version <VERSION>] [--clean] [<query>]
+```
+
+Arguments:
+
+- **[`-p, --path <PATH>`]** Workspace or crate to inspect, defaults to `.`
+- **[`--registry <REGISTRY>`]** Registry fallback, defaults to `crates.io`
+- **[`-v, --verbose`]** Print resolution metadata before the source
+- **[`--version <VERSION>`]** Resolve a specific crate version after metadata/cache lookup misses
+- **[`--clean`]** Remove the docs cache for the selected registry before resolving
+- **[`[<query>]`]** Rust path to resolve, starting with the package name; omitted only when `--clean` is used by itself
+
+Supported query examples from the implementation:
+
+- **[`cf-modkit`]**
+- **[`tokio::sync`]**
+- **[`cf-modkit::gts::plugin::BaseModkitPluginV1`]**
+- **[`cf-modkit::gts::schemas::get_core_gts_schemas`]**
+
+Behavior:
+
+- **[query requirement]** A query is required unless `--clean` is passed by itself
+- **[local resolution first]** Tries workspace metadata before hitting the network
+- **[cache-first registry fallback]** Reuses cached crate sources before downloading from the registry
+- **[crates.io fallback]** Downloads and extracts crate source if local resolution and cache lookup both fail
+- **[exact version fallback]** `--version` pins the registry/cache fallback to that exact crate version
+- **[recursive re-export resolution]** Follows re-exports across `crate`, `self`, `super`, and dependency boundaries
+  until it reaches the final source
+- **[cache location]** Registry sources are cached under the OS temp directory in `cyberfabric-docs-cache/<registry>/`
+- **[cache cleaning]** `--clean` removes the selected registry cache before resolution
+- **[source output]** Prints the resolved Rust source to stdout
+- **[verbose metadata]** Also prints query, package, library, version, manifest path, and source path
+- **[registry support]** Only `crates.io` is supported today
+
+Examples:
+
+```bash
+cyberfabric docs -p /tmp/cf-demo cf-modkit
+```
+
+```bash
+cyberfabric docs -p /tmp/cf-demo --verbose tokio::sync
+```
+
+```bash
+cyberfabric docs --registry crates.io --version 1.0.217 serde::de::Deserialize
+```
+
+```bash
+cyberfabric docs --clean
+```
+
+```bash
+cyberfabric docs --clean -p /tmp/cf-demo tokio::sync
+```
+
+### `tools`
+
+Install or upgrade a small set of Rust tooling dependencies.
+
+Known tool names:
+
+- **[`rustup`]**
+- **[`cargofmt`]** Installs the `rustfmt` rustup component
+- **[`clippy`]**
+
+Synopsis:
+
+```bash
+cyberfabric tools (--all | --install <tool,...>) [--upgrade] [--yolo] [--verbose]
+```
+
+Arguments:
+
+- **[`-a, --all`]** Select all known tools
+- **[`--install <tool,...>`]** Comma-separated tool names
+- **[`-u, --upgrade`]** Upgrade instead of initial install
+- **[`-y, --yolo`]** Skip confirmation prompts
+- **[`-v, --verbose`]** Show subprocess output
+
+Behavior:
+
+- **[selection required]** You must pass either `--all` or `--install`
+- **[interactive by default]** Without `--yolo`, the command prompts before installing/upgrading
+- **[rustup bootstrap]** If `rustup` is missing, the CLI can attempt to install it
+- **[component installs]** `cargofmt` and `clippy` are installed through `rustup component add`
+- **[upgrade mode]** Selected `rustup` upgrades via `rustup self update`; selected components upgrade via
+  `rustup update`
+
+Examples:
+
+```bash
+cyberfabric tools --all
+```
+
+```bash
+cyberfabric tools --install clippy,cargofmt --yolo
+```
+
+```bash
+cyberfabric tools --install rustup,clippy --upgrade --verbose
+```
+
+### `run`
+
+Generate a server project under `.cyberfabric/` and run it.
+
+Synopsis:
+
+```bash
+cyberfabric run -c <CONFIG> [-p <PATH>] [--watch] [--otel] [--release] [--clean]
+```
+
+Arguments:
+
+- **[`-c, --config <CONFIG>`]** Required config file path
+- **[`-p, --path <PATH>`]** Workspace root, defaults to `.`
+- **[`-w, --watch`]** Re-run when watched inputs change
+- **[`--otel`]** Pass Cargo feature `otel`
+- **[`-r, --release`]** Use release mode
+- **[`--clean`]** Remove `.cyberfabric/Cargo.lock` before running
+
+Behavior:
+
+- **[generates server structure]** Writes `.cyberfabric/Cargo.toml`, `.cyberfabric/.cargo/config.toml`, and
+  `.cyberfabric/src/main.rs`
+- **[loads config dependencies]** Builds dependencies from the config and local module metadata
+- **[runs inside `.cyberfabric`]** Executes `cargo run` in the generated directory
+- **[watch mode]** Restarts on config changes, workspace `Cargo.toml` changes, and changes in path-based dependencies
+- **[dependency watch management]** Reconciles watched dependency paths when config dependencies change
+
+Examples:
+
+```bash
+cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+```
+
+```bash
+cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --watch
+```
+
+```bash
+cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --otel --release --clean
+```
+
+### `build`
+
+Generate a server project under `.cyberfabric/` and build it.
+
+Synopsis:
+
+```bash
+cyberfabric build -c <CONFIG> [-p <PATH>] [--otel] [--release] [--clean]
+```
+
+Arguments:
+
+- **[`-c, --config <CONFIG>`]** Required config file path
+- **[`-p, --path <PATH>`]** Workspace root, defaults to `.`
+- **[`--otel`]** Pass Cargo feature `otel`
+- **[`-r, --release`]** Use release mode
+- **[`--clean`]** Remove `.cyberfabric/Cargo.lock` before building
+
+Behavior:
+
+- **[generates before build]** Recreates the generated server project before invoking Cargo
+- **[builds inside `.cyberfabric`]** Executes `cargo build` in the generated directory
+
+Examples:
+
+```bash
+cyberfabric build -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+```
+
+```bash
+cyberfabric build -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --release
+```
+
+```bash
+cyberfabric build -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --otel --clean
+```
+
+### `lint`
+
+Declared in the CLI but **currently unimplemented**.
+
+Synopsis:
+
+```bash
+cyberfabric lint [--clippy] [--dylint] [--pattern <TEXT>]
+```
+
+Arguments:
+
+- **[`--clippy`]**
+- **[`--dylint`]**
+- **[`--pattern <TEXT>`]**
+
+Current status:
+
+- **[placeholder only]** Calling this subcommand currently reaches `unimplemented!("Not implemented yet")`
+
+### `test`
+
+Declared in the CLI but **currently unimplemented**.
+
+Synopsis:
+
+```bash
+cyberfabric test [--e2e] [--module <NAME>] [--coverage]
+```
+
+Arguments:
+
+- **[`--e2e`]**
+- **[`--module <NAME>`]**
+- **[`--coverage`]**
+
+Current status:
+
+- **[placeholder only]** Calling this subcommand currently reaches `unimplemented!("Not implemented yet")`
+
+## Practical End-to-End Flows
+
+### Create a workspace and run it
+
+```bash
+cyberfabric mod init /tmp/cf-demo
+cyberfabric mod add background-worker -p /tmp/cf-demo
+cyberfabric config mod add background-worker -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+```
+
+### Add a module and wire a shared DB server
+
+```bash
+cyberfabric mod add api-db-handler -p /tmp/cf-demo
+cyberfabric config db add primary -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --engine postgres --host localhost --port 5432 --user app --password '${DB_PASSWORD}' --dbname appdb
+cyberfabric config mod add api-db-handler -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+cyberfabric config mod db add api-db-handler -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --server primary
+cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --watch
+```
+
+### Inspect source for a dependency
+
+```bash
+cyberfabric docs --verbose tokio::sync
+```
+
+## Important Caveats
+
+- **[`-c/--config` is mandatory]** For `config ...`, `build`, and `run`
+- **[`lint` and `test` are not ready]** They are part of the CLI surface but currently panic at runtime
+- **[`tools` can mutate your system]** It may install `rustup` or rustup components
+- **[`docs --registry`]** Only `crates.io` is supported
+- **[`docs`]** Accepts a single query, and that query is only optional when `--clean` is used by itself
+- **[`config mod add`]** Remote modules require both `--package` and `--module-version`
+- **[`config mod db add`]** The module must already exist in config
+
+## Quick Reference
+
+```bash
+cyberfabric mod init <path>
+cyberfabric mod add <background-worker|api-db-handler|rest-gateway> -p <workspace>
+
+cyberfabric config mod list -p <workspace> -c <config>
+cyberfabric config mod add <module> -p <workspace> -c <config>
+cyberfabric config mod rm <module> -p <workspace> -c <config>
+cyberfabric config mod db add <module> -p <workspace> -c <config> ...
+cyberfabric config mod db edit <module> -p <workspace> -c <config> ...
+cyberfabric config mod db rm <module> -p <workspace> -c <config>
+
+cyberfabric config db add <name> -p <workspace> -c <config> ...
+cyberfabric config db edit <name> -p <workspace> -c <config> ...
+cyberfabric config db rm <name> -p <workspace> -c <config>
+
+cyberfabric docs [-p <path>] [--version <version>] [--clean] [<query>]
+cyberfabric tools --all
+cyberfabric run -p <workspace> -c <config> [--watch]
+cyberfabric build -p <workspace> -c <config>
+```
