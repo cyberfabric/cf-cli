@@ -1,7 +1,8 @@
 use anyhow::{Context, bail};
-use clap::Args;
+use clap::{Args, ValueEnum};
 use std::io::{self, Write};
 use std::process::Command;
+use std::{fmt, slice};
 
 #[derive(Args)]
 pub struct ToolsArgs {
@@ -12,8 +13,8 @@ pub struct ToolsArgs {
     #[arg(short = 'u', long)]
     upgrade: bool,
     /// Install specific tools
-    #[arg(long, value_delimiter = ',', conflicts_with = "all")]
-    install: Option<Vec<String>>,
+    #[arg(long, value_delimiter = ',', value_enum, conflicts_with = "all")]
+    install: Option<Vec<ToolName>>,
     /// Do not ask for confirmation
     #[arg(short = 'y', long)]
     yolo: bool,
@@ -22,34 +23,56 @@ pub struct ToolsArgs {
     verbose: bool,
 }
 
-struct Tool {
-    name: &'static str,
-    check_binary: &'static str,
-    install: InstallMethod,
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum ToolName {
+    Rustup,
+    Rustfmt,
+    Clippy,
 }
 
+impl ToolName {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rustup => "rustup",
+            Self::Rustfmt => "rustfmt",
+            Self::Clippy => "clippy",
+        }
+    }
+
+    const fn check_binary(self) -> &'static str {
+        match self {
+            Self::Rustup => "rustup",
+            Self::Rustfmt => "rustfmt",
+            Self::Clippy => "cargo-clippy",
+        }
+    }
+
+    const fn install_method(self) -> InstallMethod {
+        match self {
+            Self::Rustup => InstallMethod::Prerequisite,
+            Self::Rustfmt => InstallMethod::RustupComponent("rustfmt"),
+            Self::Clippy => InstallMethod::RustupComponent("clippy"),
+        }
+    }
+
+    fn all() -> slice::Iter<'static, Self> {
+        ALL_TOOLS.iter()
+    }
+}
+
+impl fmt::Display for ToolName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Copy)]
 enum InstallMethod {
     RustupComponent(&'static str),
     Prerequisite,
 }
 
-const TOOLS: &[Tool] = &[
-    Tool {
-        name: "rustup",
-        check_binary: "rustup",
-        install: InstallMethod::Prerequisite,
-    },
-    Tool {
-        name: "cargofmt",
-        check_binary: "rustfmt",
-        install: InstallMethod::RustupComponent("rustfmt"),
-    },
-    Tool {
-        name: "clippy",
-        check_binary: "cargo-clippy",
-        install: InstallMethod::RustupComponent("clippy"),
-    },
-];
+const ALL_TOOLS: &[ToolName] = &[ToolName::Rustup, ToolName::Rustfmt, ToolName::Clippy];
 
 impl ToolsArgs {
     pub fn run(&self) -> anyhow::Result<()> {
@@ -62,60 +85,48 @@ impl ToolsArgs {
         self.install_tools(&tools)
     }
 
-    fn resolve_tools(&self) -> anyhow::Result<Vec<&'static Tool>> {
-        if let Some(names) = &self.install {
-            let mut tools = Vec::with_capacity(names.len());
-            for name in names {
-                let tool = TOOLS
-                    .iter()
-                    .find(|t| t.name == name.as_str())
-                    .with_context(|| {
-                        format!(
-                            "unknown tool '{}'. known tools: {}",
-                            name,
-                            TOOLS.iter().map(|t| t.name).collect::<Vec<_>>().join(", ")
-                        )
-                    })?;
-                tools.push(tool);
-            }
-            return Ok(tools);
+    fn resolve_tools(&self) -> anyhow::Result<Vec<ToolName>> {
+        if let Some(tools) = &self.install {
+            return Ok(tools.clone());
         }
 
         if self.all {
-            return Ok(TOOLS.iter().collect());
+            return Ok(ToolName::all().copied().collect());
         }
 
         bail!(
             "no tools specified. Use --all to install all tools, or --install <tool,...> to install specific tools. \
              Known tools: {}",
-            TOOLS.iter().map(|t| t.name).collect::<Vec<_>>().join(", ")
+            ToolName::all()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
         )
     }
 
-    fn install_tools(&self, tools: &[&Tool]) -> anyhow::Result<()> {
+    fn install_tools(&self, tools: &[ToolName]) -> anyhow::Result<()> {
         ensure_rustup(self.yolo)?;
 
         for tool in tools {
-            let installed = is_installed(tool.check_binary);
+            let installed = is_installed(tool.check_binary());
             if installed {
-                println!("✓ {} is already installed", tool.name);
+                println!("✓ {tool} is already installed");
                 continue;
             }
 
-            match tool.install {
+            match tool.install_method() {
                 InstallMethod::Prerequisite => {
                     bail!(
-                        "'{}' is required but not found. Please install it manually: https://rustup.rs",
-                        tool.name
+                        "'{tool}' is required but not found. Please install it manually: https://rustup.rs"
                     );
                 }
                 InstallMethod::RustupComponent(component) => {
-                    if !self.yolo && !confirm(&format!("Install {} via rustup?", tool.name))? {
-                        println!("Skipping {}", tool.name);
+                    if !self.yolo && !confirm(&format!("Install {tool} via rustup?"))? {
+                        println!("Skipping {tool}");
                         continue;
                     }
                     rustup_component_add(component, self.verbose)?;
-                    println!("✓ {} installed", tool.name);
+                    println!("✓ {tool} installed");
                 }
             }
         }
@@ -123,10 +134,10 @@ impl ToolsArgs {
         Ok(())
     }
 
-    fn upgrade_tools(&self, tools: &[&Tool]) -> anyhow::Result<()> {
+    fn upgrade_tools(&self, tools: &[ToolName]) -> anyhow::Result<()> {
         ensure_rustup(self.yolo)?;
 
-        let has_rustup = tools.iter().any(|t| t.name == "rustup");
+        let has_rustup = tools.contains(&ToolName::Rustup);
         if has_rustup {
             if !self.yolo && !confirm("Upgrade rustup via 'rustup self update'?")? {
                 println!("Skipping rustup upgrade");
@@ -142,7 +153,8 @@ impl ToolsArgs {
 
         let components: Vec<_> = tools
             .iter()
-            .filter(|t| matches!(t.install, InstallMethod::RustupComponent(_)))
+            .copied()
+            .filter(|tool| matches!(tool.install_method(), InstallMethod::RustupComponent(_)))
             .collect();
 
         if !components.is_empty() {
@@ -152,8 +164,8 @@ impl ToolsArgs {
             }
             run_verbose(Command::new("rustup").arg("update"), self.verbose)
                 .context("failed to run rustup update")?;
-            for tool in &components {
-                println!("✓ {} upgraded", tool.name);
+            for tool in components {
+                println!("✓ {tool} upgraded");
             }
         }
 
@@ -175,30 +187,8 @@ fn ensure_rustup(yolo: bool) -> anyhow::Result<()> {
 
     println!("Installing rustup...");
     install_rustup().context("failed to install rustup")?;
-
-    if !is_installed("rustup") && !is_installed(&cargo_bin_path("rustup")) {
-        bail!(
-            "rustup was installed but is not available on PATH. \
-             Please restart your shell or add ~/.cargo/bin to your PATH."
-        );
-    }
-
     println!("✓ rustup installed");
     Ok(())
-}
-
-fn cargo_bin_path(binary: &str) -> String {
-    let home = std::env::home_dir().unwrap_or_default();
-    let bin = if cfg!(target_family = "windows") {
-        format!("{binary}.exe")
-    } else {
-        binary.to_string()
-    };
-    home.join(".cargo")
-        .join("bin")
-        .join(bin)
-        .to_string_lossy()
-        .into_owned()
 }
 
 fn install_rustup() -> anyhow::Result<()> {

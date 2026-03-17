@@ -1,5 +1,5 @@
 use super::{SYSTEM_REGISTRY_MODULES, SystemRegistryModule, load_config, resolve_modules_context};
-use crate::common::PathConfigArgs;
+use crate::common::{PathConfigArgs, Registry};
 use crate::config::app_config::ModuleConfig;
 use anyhow::{Context, bail};
 use clap::Args;
@@ -27,9 +27,11 @@ pub struct ListArgs {
     /// Show all information related to the module.
     #[arg(short = 'v', long)]
     verbose: bool,
-    /// Registry to query when verbose mode is enabled.
-    #[arg(long, default_value = "crates.io")]
-    registry: String,
+    /// Registry to query for system-crate metadata. Only consulted when both
+    /// `--system` and `--verbose` are enabled; `--verbose` alone does not query
+    /// any registry. Defaults to `crates.io`.
+    #[arg(long, value_enum, default_value_t = Registry::CratesIo)]
+    registry: Registry,
 }
 
 impl ListArgs {
@@ -42,19 +44,13 @@ impl ListArgs {
         if self.system {
             println!("System crates:");
             if self.verbose {
-                if self.registry != "crates.io" {
-                    let registry = &self.registry;
-                    bail!(
-                        "unsupported registry '{registry}'. Only 'crates.io' is currently supported"
-                    );
-                }
-
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .context("failed to build tokio runtime for registry queries")?;
 
-                let metadata_by_crate = runtime.block_on(fetch_all_crates_io_metadata())?;
+                let metadata_by_crate =
+                    runtime.block_on(fetch_all_registry_metadata(self.registry))?;
 
                 for module in SYSTEM_REGISTRY_MODULES {
                     let Some(metadata) = metadata_by_crate.get(module.crate_name) else {
@@ -208,7 +204,9 @@ struct CrateVersion {
     features: BTreeMap<String, Vec<String>>,
 }
 
-async fn fetch_all_crates_io_metadata() -> anyhow::Result<HashMap<&'static str, RegistryMetadata>> {
+async fn fetch_all_registry_metadata(
+    registry: Registry,
+) -> anyhow::Result<HashMap<&'static str, RegistryMetadata>> {
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
     let client = Client::builder()
         .user_agent("cyberfabric-cli")
@@ -225,7 +223,7 @@ async fn fetch_all_crates_io_metadata() -> anyhow::Result<HashMap<&'static str, 
                 .acquire_owned()
                 .await
                 .context("failed to acquire registry fetch permit")?;
-            let metadata = fetch_crates_io_metadata(&cloned_client, module)
+            let metadata = fetch_registry_metadata(&cloned_client, registry, module)
                 .await
                 .with_context(|| format!("failed to fetch metadata for '{}'", module.crate_name))?;
             Ok::<_, anyhow::Error>((module.crate_name, metadata))
@@ -241,11 +239,12 @@ async fn fetch_all_crates_io_metadata() -> anyhow::Result<HashMap<&'static str, 
     Ok(metadata_by_crate)
 }
 
-async fn fetch_crates_io_metadata(
+async fn fetch_registry_metadata(
     client: &Client,
+    registry: Registry,
     module: SystemRegistryModule,
 ) -> anyhow::Result<RegistryMetadata> {
-    let crate_url = format!("https://crates.io/api/v1/crates/{}", module.crate_name);
+    let crate_url = format!("https://{registry}/api/v1/crates/{}", module.crate_name);
     let crate_response = client
         .get(&crate_url)
         .send()
@@ -264,7 +263,8 @@ async fn fetch_crates_io_metadata(
         .find(|version| version.num == latest_version)
         .map_or_else(Vec::new, |version| version.features.into_keys().collect());
 
-    let module_rs_content = fetch_module_rs_content(client, module, &latest_version).await?;
+    let module_rs_content =
+        fetch_module_rs_content(client, registry, module, &latest_version).await?;
     let module_metadata = parse_module_rs_source(&module_rs_content)
         .with_context(|| format!("invalid src/module.rs for {}", module.crate_name))?;
 
@@ -278,11 +278,12 @@ async fn fetch_crates_io_metadata(
 
 async fn fetch_module_rs_content(
     client: &Client,
+    registry: Registry,
     module: SystemRegistryModule,
     latest_version: &str,
 ) -> anyhow::Result<String> {
     let download_url = format!(
-        "https://crates.io/api/v1/crates/{}/{}/download",
+        "https://{registry}/api/v1/crates/{}/{}/download",
         module.crate_name, latest_version
     );
     let crate_archive = client

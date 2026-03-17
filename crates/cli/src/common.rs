@@ -1,10 +1,11 @@
 use anyhow::Context;
-use clap::Args;
+use clap::{Args, ValueEnum};
 use module_parser::{
     CargoToml, CargoTomlDependencies, CargoTomlDependency, Config, ConfigModuleMetadata,
     get_dependencies, get_module_name_from_crate,
 };
 use std::collections::HashMap;
+use std::fmt::{self, Display};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -47,6 +48,27 @@ pub struct BuildRunArgs {
     /// Remove Cargo.lock at the start of the execution
     #[arg(long)]
     pub clean: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub enum Registry {
+    #[default]
+    #[value(name = "crates.io")]
+    CratesIo,
+}
+
+impl Registry {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CratesIo => "crates.io",
+        }
+    }
+}
+
+impl Display for Registry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl BuildRunArgs {

@@ -1,3 +1,4 @@
+use crate::common::Registry;
 use anyhow::{Context, bail};
 use clap::Args;
 use flate2::read::GzDecoder;
@@ -23,8 +24,8 @@ pub struct DocsArgs {
     #[arg(short = 'p', long, default_value = ".")]
     path: PathBuf,
     /// Registry to query when the crate is not present in local metadata
-    #[arg(long, default_value = "crates.io")]
-    registry: String,
+    #[arg(long, value_enum, default_value_t = Registry::CratesIo)]
+    registry: Registry,
     /// Print query/package/version/source metadata before the resolved Rust source
     #[arg(short = 'v', long)]
     verbose: bool,
@@ -47,7 +48,7 @@ pub struct DocsArgs {
 impl DocsArgs {
     pub fn run(&self) -> anyhow::Result<()> {
         if self.clean {
-            clean_registry_cache(&self.registry)?;
+            clean_registry_cache(self.registry)?;
         }
 
         let Some(query) = self.query.as_deref() else {
@@ -71,7 +72,7 @@ impl DocsArgs {
             workspace_path: &workspace_path,
             client: &client,
             runtime: &runtime,
-            registry: &self.registry,
+            registry: self.registry,
         };
         let mut visited = HashSet::new();
         let final_resolution = resolve_query_recursive(
@@ -206,7 +207,7 @@ struct Resolver<'a> {
     workspace_path: &'a Path,
     client: &'a Client,
     runtime: &'a tokio::runtime::Runtime,
-    registry: &'a str,
+    registry: Registry,
 }
 
 fn resolve_query_recursive(
@@ -257,7 +258,7 @@ fn resolve_from_paths(
     preferred_path: &Path,
     client: &Client,
     runtime: &tokio::runtime::Runtime,
-    registry: &str,
+    registry: Registry,
     query: &str,
     requested_version: Option<&Version>,
 ) -> anyhow::Result<Option<ResolvedMetadataPath>> {
@@ -283,14 +284,10 @@ fn resolve_from_paths(
 
 async fn resolve_from_registry(
     client: &Client,
-    registry: &str,
+    registry: Registry,
     query: &str,
     requested_version: Option<&Version>,
 ) -> anyhow::Result<ResolvedMetadataPath> {
-    if registry != "crates.io" {
-        bail!("unsupported registry '{registry}'. Only 'crates.io' is currently supported");
-    }
-
     let crate_name = query
         .split("::")
         .next()
@@ -304,10 +301,10 @@ async fn resolve_from_registry(
     let resolved_version = if let Some(requested_version) = requested_version {
         requested_version.to_string()
     } else {
-        fetch_exact_crates_io_candidate(client, registry, crate_name)
+        fetch_exact_registry_candidate(client, registry, crate_name)
             .await?
             .with_context(|| {
-                format!("could not resolve package '{crate_name}' from the crates.io registry")
+                format!("could not resolve package '{crate_name}' from the {registry} registry")
             })?
             .max_version
     };
@@ -713,9 +710,9 @@ fn normalize_dependency_alias(alias: &str) -> String {
     alias.replace('-', "_")
 }
 
-async fn fetch_exact_crates_io_candidate(
+async fn fetch_exact_registry_candidate(
     client: &Client,
-    registry: &str,
+    registry: Registry,
     crate_name: &str,
 ) -> anyhow::Result<Option<ExactCrate>> {
     let crate_url = format!("https://{registry}/api/v1/crates/{crate_name}");
@@ -758,7 +755,7 @@ struct ExactCrate {
 
 async fn download_crate_archive(
     client: &Client,
-    registry: &str,
+    registry: Registry,
     crate_name: &str,
     version: &str,
 ) -> anyhow::Result<Vec<u8>> {
@@ -779,7 +776,7 @@ async fn download_crate_archive(
 
 async fn cache_crate_source(
     client: &Client,
-    registry: &str,
+    registry: Registry,
     crate_name: &str,
     version: &str,
 ) -> anyhow::Result<PathBuf> {
@@ -801,7 +798,7 @@ async fn cache_crate_source(
     }
 }
 
-fn registry_cache_root(registry: &str) -> anyhow::Result<PathBuf> {
+fn registry_cache_root(registry: Registry) -> anyhow::Result<PathBuf> {
     let cache_root = std::env::temp_dir()
         .join("cyberfabric-docs-cache")
         .join(sanitize_registry_name(registry));
@@ -810,7 +807,7 @@ fn registry_cache_root(registry: &str) -> anyhow::Result<PathBuf> {
     Ok(cache_root)
 }
 
-fn package_cache_root(registry: &str, crate_name: &str) -> anyhow::Result<PathBuf> {
+fn package_cache_root(registry: Registry, crate_name: &str) -> anyhow::Result<PathBuf> {
     let package_root = registry_cache_root(registry)?.join(crate_name);
     fs::create_dir_all(&package_root).with_context(|| {
         format!(
@@ -822,7 +819,7 @@ fn package_cache_root(registry: &str, crate_name: &str) -> anyhow::Result<PathBu
 }
 
 fn resolve_from_cache(
-    registry: &str,
+    registry: Registry,
     crate_name: &str,
     query: &str,
     requested_version: Option<&Version>,
@@ -899,7 +896,7 @@ fn cached_package_versions(package_root: &Path) -> anyhow::Result<Vec<(Version, 
         .collect::<Vec<_>>())
 }
 
-fn clean_registry_cache(registry: &str) -> anyhow::Result<()> {
+fn clean_registry_cache(registry: Registry) -> anyhow::Result<()> {
     let cache_root = std::env::temp_dir()
         .join("cyberfabric-docs-cache")
         .join(sanitize_registry_name(registry));
@@ -910,8 +907,9 @@ fn clean_registry_cache(registry: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn sanitize_registry_name(registry: &str) -> String {
+fn sanitize_registry_name(registry: Registry) -> String {
     registry
+        .as_str()
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
@@ -1023,6 +1021,7 @@ mod tests {
         next_reexport_step, parse_dependencies, resolve_query_recursive,
         should_retry_registry_request,
     };
+    use crate::common::Registry;
     use module_parser::resolve_source_from_metadata;
     use module_parser::test_utils::TempDirExt;
     use reqwest::{Method, StatusCode};
@@ -1120,7 +1119,7 @@ mod tests {
             workspace_path: project.path(),
             client: &client,
             runtime: &runtime,
-            registry: "crates.io",
+            registry: Registry::CratesIo,
         };
         let mut visited = HashSet::new();
 
@@ -1290,7 +1289,7 @@ mod tests {
             workspace_path: project.path(),
             client: &client,
             runtime: &runtime,
-            registry: "crates.io",
+            registry: Registry::CratesIo,
         };
         let mut visited = HashSet::new();
 
