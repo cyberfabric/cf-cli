@@ -263,7 +263,7 @@ pub fn generate_server_structure(
         "src/main.rs",
         &main_template.render(&prepare_cargo_server_main(
             config_path,
-            &cargo_toml.dependencies,
+            current_dependencies,
         ))?,
     )?;
 
