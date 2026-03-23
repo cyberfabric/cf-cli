@@ -65,8 +65,11 @@ cyberfabric
 - **[`-p, --path <PATH>`]** Workspace root path. Defaults to `.` in most commands that work on a workspace.
 - **[`-c, --config <PATH>`]** Config file path. This is required anywhere `PathConfigArgs` is used because there is no
   default.
+- **[`--name <NAME>`]** For `build` and `run`, overrides the generated server project and binary name that would
+  otherwise default to the config filename stem.
 - **[`-v, --verbose`]** Usually enables more logging or richer output.
-- **[name validation]** Config-managed names for modules and DB servers only allow letters, numbers, `-`, and `_`.
+- **[name validation]** Config-managed names for modules, DB servers, and generated server names only allow letters,
+  numbers, `-`, and `_`.
 
 ## What the Tool Manages
 
@@ -74,7 +77,7 @@ From the current implementation, the CLI is mainly for:
 
 - **[workspace scaffolding]** Initialize a CyberFabric workspace and add module templates
 - **[config management]** Enable modules and patch YAML config sections
-- **[server generation]** Generate a runnable Cargo project under `.cyberfabric/`
+- **[server generation]** Generate a runnable Cargo project under `.cyberfabric/<name>/`
 - **[build/run]** Build or run that generated server
 - **[source inspection]** Resolve Rust source for crates/items through workspace metadata or crates.io
 - **[tool bootstrap]** Install or upgrade `rustup`, `cargofmt`, and `clippy`
@@ -537,29 +540,32 @@ cyberfabric tools --install rustup,clippy --upgrade --verbose
 
 ### `run`
 
-Generate a server project under `.cyberfabric/` and run it.
+Generate a server project under `.cyberfabric/<name>/` and run it.
 
 Synopsis:
 
 ```bash
-cyberfabric run -c <CONFIG> [-p <PATH>] [--watch] [--otel] [--release] [--clean]
+cyberfabric run -c <CONFIG> [-p <PATH>] [--name <NAME>] [--watch] [--otel] [--release] [--clean]
 ```
 
 Arguments:
 
 - **[`-c, --config <CONFIG>`]** Required config file path
 - **[`-p, --path <PATH>`]** Workspace root, defaults to `.`
+- **[`--name <NAME>`]** Override the generated server project and binary name; defaults to the config filename stem
 - **[`-w, --watch`]** Re-run when watched inputs change
 - **[`--otel`]** Pass Cargo feature `otel`
 - **[`-r, --release`]** Use release mode
-- **[`--clean`]** Remove `.cyberfabric/Cargo.lock` before running
+- **[`--clean`]** Remove `.cyberfabric/<name>/Cargo.lock` before running
 
 Behavior:
 
-- **[generates server structure]** Writes `.cyberfabric/Cargo.toml`, `.cyberfabric/.cargo/config.toml`, and
-  `.cyberfabric/src/main.rs`
+- **[name resolution]** Uses the config filename stem by default, so `config/quickstart.yml` generates under
+  `.cyberfabric/quickstart/`; `--name` overrides that default
+- **[generates server structure]** Writes `.cyberfabric/<name>/Cargo.toml`, `.cyberfabric/<name>/.cargo/config.toml`,
+  and `.cyberfabric/<name>/src/main.rs`
 - **[loads config dependencies]** Builds dependencies from the config and local module metadata
-- **[runs inside `.cyberfabric`]** Executes `cargo run` in the generated directory
+- **[runs inside `.cyberfabric/<name>`]** Executes `cargo run` in the generated directory
 - **[watch mode]** Restarts on config changes, workspace `Cargo.toml` changes, and changes in path-based dependencies
 - **[dependency watch management]** Reconciles watched dependency paths when config dependencies change
 
@@ -577,28 +583,35 @@ cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --watch
 cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --otel --release --clean
 ```
 
+```bash
+cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --name demo-server
+```
+
 ### `build`
 
-Generate a server project under `.cyberfabric/` and build it.
+Generate a server project under `.cyberfabric/<name>/` and build it.
 
 Synopsis:
 
 ```bash
-cyberfabric build -c <CONFIG> [-p <PATH>] [--otel] [--release] [--clean]
+cyberfabric build -c <CONFIG> [-p <PATH>] [--name <NAME>] [--otel] [--release] [--clean]
 ```
 
 Arguments:
 
 - **[`-c, --config <CONFIG>`]** Required config file path
 - **[`-p, --path <PATH>`]** Workspace root, defaults to `.`
+- **[`--name <NAME>`]** Override the generated server project and binary name; defaults to the config filename stem
 - **[`--otel`]** Pass Cargo feature `otel`
 - **[`-r, --release`]** Use release mode
-- **[`--clean`]** Remove `.cyberfabric/Cargo.lock` before building
+- **[`--clean`]** Remove `.cyberfabric/<name>/Cargo.lock` before building
 
 Behavior:
 
 - **[generates before build]** Recreates the generated server project before invoking Cargo
-- **[builds inside `.cyberfabric`]** Executes `cargo build` in the generated directory
+- **[name resolution]** Uses the config filename stem by default, so `config/quickstart.yml` builds from
+  `.cyberfabric/quickstart/`; `--name` overrides that default
+- **[builds inside `.cyberfabric/<name>`]** Executes `cargo build` in the generated directory
 
 Examples:
 
@@ -612,6 +625,10 @@ cyberfabric build -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --releas
 
 ```bash
 cyberfabric build -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --otel --clean
+```
+
+```bash
+cyberfabric build -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --name demo-server
 ```
 
 ### `lint`
@@ -710,6 +727,6 @@ cyberfabric config db rm <name> -p <workspace> -c <config>
 
 cyberfabric docs [-p <path>] [--version <version>] [--clean] [<query>]
 cyberfabric tools --all
-cyberfabric run -p <workspace> -c <config> [--watch]
-cyberfabric build -p <workspace> -c <config>
+cyberfabric run -p <workspace> -c <config> [--name <name>] [--watch]
+cyberfabric build -p <workspace> -c <config> [--name <name>]
 ```

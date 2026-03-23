@@ -1,7 +1,8 @@
+use crate::config::validate_name;
 use anyhow::Context;
 use clap::{Args, ValueEnum};
 use module_parser::{
-    CargoToml, CargoTomlDependencies, CargoTomlDependency, Config, ConfigModuleMetadata,
+    CargoToml, CargoTomlDependencies, CargoTomlDependency, Config, ConfigModuleMetadata, Package,
     get_dependencies, get_module_name_from_crate,
 };
 use std::collections::HashMap;
@@ -48,6 +49,9 @@ pub struct BuildRunArgs {
     /// Remove Cargo.lock at the start of the execution
     #[arg(long)]
     pub clean: bool,
+    /// Override the generated server and binary name
+    #[arg(long)]
+    pub name: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
@@ -72,22 +76,23 @@ impl Display for Registry {
 }
 
 impl BuildRunArgs {
-    pub fn resolve_workspace_and_config(&self) -> anyhow::Result<(PathBuf, PathBuf)> {
+    pub fn resolve_workspace_and_config(&self) -> anyhow::Result<(PathBuf, PathBuf, String)> {
         let path = self.path_config.resolve_path()?;
         let config_path = self.path_config.resolve_config()?;
+        let project_name = resolve_generated_project_name(&config_path, self.name.as_deref())?;
         if self.clean {
-            remove_from_file_structure(&path, "Cargo.lock")?;
+            remove_from_file_structure(&path, &project_name, "Cargo.lock")?;
         }
 
-        Ok((path, config_path))
+        Ok((path, config_path, project_name))
     }
 }
 
 pub const BASE_PATH: &str = ".cyberfabric";
 
 const CARGO_CONFIG_TOML: &str = r#"[build]
-target-dir = "../target"
-build-dir = "../target"
+target-dir = "../../target"
+build-dir = "../../target"
 "#;
 
 const CARGO_SERVER_MAIN: &str = r#"
@@ -240,12 +245,17 @@ fn create_required_deps(path: &Path) -> anyhow::Result<CargoTomlDependencies> {
 
 pub fn generate_server_structure(
     path: &Path,
+    project_name: &str,
     config_path: &Path,
     current_dependencies: &CargoTomlDependencies,
 ) -> anyhow::Result<()> {
     let mut dependencies = current_dependencies.clone();
     dependencies.extend(create_required_deps(path)?);
     let cargo_toml = CargoToml {
+        package: Package {
+            name: project_name.to_owned(),
+            ..Default::default()
+        },
         dependencies,
         features: FEATURES.clone(),
         ..Default::default()
@@ -256,10 +266,11 @@ pub fn generate_server_structure(
         .build()?
         .parse(CARGO_SERVER_MAIN)?;
 
-    create_file_structure(path, "Cargo.toml", &cargo_toml_str)?;
-    create_file_structure(path, ".cargo/config.toml", CARGO_CONFIG_TOML)?;
+    create_file_structure(path, project_name, "Cargo.toml", &cargo_toml_str)?;
+    create_file_structure(path, project_name, ".cargo/config.toml", CARGO_CONFIG_TOML)?;
     create_file_structure(
         path,
+        project_name,
         "src/main.rs",
         &main_template.render(&prepare_cargo_server_main(
             config_path,
@@ -270,9 +281,18 @@ pub fn generate_server_structure(
     Ok(())
 }
 
-fn create_file_structure(path: &Path, relative_path: &str, contents: &str) -> anyhow::Result<()> {
+pub fn generated_project_dir(path: &Path, project_name: &str) -> PathBuf {
+    PathBuf::from(path).join(BASE_PATH).join(project_name)
+}
+
+fn create_file_structure(
+    path: &Path,
+    project_name: &str,
+    relative_path: &str,
+    contents: &str,
+) -> anyhow::Result<()> {
     use std::io::Write;
-    let path = PathBuf::from(path).join(BASE_PATH).join(relative_path);
+    let path = generated_project_dir(path, project_name).join(relative_path);
     fs::create_dir_all(
         path.parent().context(
             "this should be unreachable, the parent for the file structure always exists",
@@ -289,12 +309,39 @@ fn create_file_structure(path: &Path, relative_path: &str, contents: &str) -> an
         .context("can't write to file")
 }
 
-fn remove_from_file_structure(path: &Path, relative_path: &str) -> anyhow::Result<()> {
-    let path = PathBuf::from(path).join(BASE_PATH).join(relative_path);
+fn remove_from_file_structure(
+    path: &Path,
+    project_name: &str,
+    relative_path: &str,
+) -> anyhow::Result<()> {
+    let path = generated_project_dir(path, project_name).join(relative_path);
     if path.exists() {
         fs::remove_file(path).context("can't remove file")?;
     }
     Ok(())
+}
+
+fn resolve_generated_project_name(
+    config_path: &Path,
+    override_name: Option<&str>,
+) -> anyhow::Result<String> {
+    if let Some(name) = override_name {
+        validate_name(name, "server")?;
+        return Ok(name.to_owned());
+    }
+
+    let file_stem = config_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .context("config filename is not valid UTF-8")?;
+    validate_name(file_stem, "server").with_context(|| {
+        format!(
+            "invalid generated server name '{file_stem}' from config file {}; use --name to override",
+            config_path.display()
+        )
+    })?;
+
+    Ok(file_stem.to_owned())
 }
 
 /// UNC paths are not supported like `\\server\share`, as we replace backslashes with forward slashes.
@@ -317,8 +364,9 @@ fn prepare_cargo_server_main(
 
 #[cfg(test)]
 mod tests {
-    use super::merge_module_metadata;
+    use super::{merge_module_metadata, resolve_generated_project_name};
     use module_parser::{Capability, ConfigModuleMetadata};
+    use std::path::Path;
 
     #[test]
     fn merge_module_metadata_preserves_config_overrides() {
@@ -349,5 +397,21 @@ mod tests {
         assert_eq!(merged.path.as_deref(), Some("modules/custom-path"));
         assert_eq!(merged.deps, vec!["authz"]);
         assert_eq!(merged.capabilities, vec![Capability::Grpc]);
+    }
+
+    #[test]
+    fn generated_project_name_defaults_to_config_file_stem() {
+        let name = resolve_generated_project_name(Path::new("/tmp/quickstart.yml"), None)
+            .expect("config stem should resolve to a project name");
+
+        assert_eq!(name, "quickstart");
+    }
+
+    #[test]
+    fn generated_project_name_prefers_explicit_override() {
+        let name = resolve_generated_project_name(Path::new("/tmp/quickstart.yml"), Some("demo"))
+            .expect("explicit override should resolve to a project name");
+
+        assert_eq!(name, "demo");
     }
 }

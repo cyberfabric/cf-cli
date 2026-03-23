@@ -8,3 +8,5 @@ touched.
 Always prefer `cargo add` over manually editing `Cargo.toml`.
 
 Always prefer enums over strings when there's a clear set of valid values.
+
+When updating the behaviour of any flag or option, update the [SKILLS.md](./SKILLS.md) file.

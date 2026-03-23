@@ -16,22 +16,32 @@ pub(super) enum RunSignal {
 pub(super) struct RunLoop {
     path: PathBuf,
     config_path: PathBuf,
+    project_name: String,
 }
 
 pub(super) static OTEL: AtomicBool = AtomicBool::new(false);
 pub(super) static RELEASE: AtomicBool = AtomicBool::new(false);
 
 impl RunLoop {
-    pub(super) const fn new(path: PathBuf, config_path: PathBuf) -> Self {
-        Self { path, config_path }
+    pub(super) const fn new(path: PathBuf, config_path: PathBuf, project_name: String) -> Self {
+        Self {
+            path,
+            config_path,
+            project_name,
+        }
     }
 
     pub(super) fn run(&self, watch: bool) -> anyhow::Result<RunSignal> {
         let dependencies =
             common::get_config(&self.path, &self.config_path)?.create_dependencies()?;
-        common::generate_server_structure(&self.path, &self.config_path, &dependencies)?;
+        common::generate_server_structure(
+            &self.path,
+            &self.project_name,
+            &self.config_path,
+            &dependencies,
+        )?;
 
-        let cargo_dir = self.path.join(common::BASE_PATH);
+        let cargo_dir = common::generated_project_dir(&self.path, &self.project_name);
 
         if !watch {
             let status = cargo_run(&cargo_dir)
@@ -112,6 +122,7 @@ impl RunLoop {
                         if new_deps != current_deps {
                             if let Err(e) = common::generate_server_structure(
                                 &self.path,
+                                &self.project_name,
                                 &self.config_path,
                                 &new_deps,
                             ) {
