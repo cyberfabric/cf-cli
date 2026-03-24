@@ -1,6 +1,6 @@
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
 #[derive(Deserialize)]
@@ -25,7 +25,7 @@ impl Config {
                 CargoTomlDependency {
                     package: module.metadata.package,
                     version: module.metadata.version,
-                    features: module.metadata.features,
+                    features: module.metadata.features.into_iter().collect(),
                     default_features: module.metadata.default_features,
                     path: module.metadata.path,
                 },
@@ -112,8 +112,8 @@ pub struct CargoTomlDependency {
         deserialize_with = "opt_string_none_as_star::deserialize"
     )]
     pub version: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub features: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub features: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_features: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]

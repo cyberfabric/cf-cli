@@ -3,7 +3,7 @@ use super::source::{NotFoundError, resolve_rust_path};
 use crate::{CargoTomlDependencies, CargoTomlDependency};
 use anyhow::Context;
 use cargo_metadata::{DependencyKind, Package, PackageId, Target};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,13 +86,32 @@ pub fn get_dependencies<S: std::hash::BuildHasher>(
     path: &Path,
     deps: &HashMap<String, String, S>,
 ) -> anyhow::Result<CargoTomlDependencies> {
-    let meta = cargo_metadata::MetadataCommand::new()
+    let cargo_metadata::Metadata {
+        packages, resolve, ..
+    } = cargo_metadata::MetadataCommand::new()
         .current_dir(path)
         .exec()
         .context("failed to run cargo metadata")?;
+    let resolve_nodes = resolve.as_ref().map(|resolve| {
+        resolve
+            .nodes
+            .iter()
+            .map(|node| (node.id.clone(), node))
+            .collect::<HashMap<_, _>>()
+    });
     let mut res = CargoTomlDependencies::with_capacity(deps.len());
-    for pkg in meta.packages {
+    for pkg in packages {
         if let Some(name) = deps.get(pkg.name.as_str()) {
+            let features = resolve_nodes
+                .as_ref()
+                .and_then(|nodes| nodes.get(&pkg.id))
+                .map(|node| {
+                    node.features
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<BTreeSet<_>>()
+                })
+                .unwrap_or_default();
             res.insert(
                 name.clone(),
                 CargoTomlDependency {
@@ -102,6 +121,7 @@ pub fn get_dependencies<S: std::hash::BuildHasher>(
                         Some(pkg.name.to_string())
                     },
                     version: Some(pkg.version.to_string()),
+                    features,
                     ..Default::default()
                 },
             );
@@ -271,8 +291,11 @@ fn is_normal_dependency(dep: &cargo_metadata::NodeDep) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{list_library_mappings_from_metadata, resolve_source_from_metadata};
+    use super::{
+        get_dependencies, list_library_mappings_from_metadata, resolve_source_from_metadata,
+    };
     use crate::test_utils::TempDirExt;
+    use std::collections::{BTreeSet, HashMap};
     use tempfile::TempDir;
 
     #[test]
@@ -503,6 +526,65 @@ mod tests {
                     package_name: "cf-helper".to_owned(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn gets_enabled_features_for_located_packages() {
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        temp_dir.write(
+            "Cargo.toml",
+            r#"
+            [package]
+            name = "cf-app"
+            version = "0.1.0"
+            edition = "2024"
+
+            [dependencies]
+            helper_alias = { package = "cf-helper", path = "cf-helper", default-features = false, features = ["grpc", "otel"] }
+            "#,
+        );
+        temp_dir.write(
+            "src/lib.rs",
+            r#"
+            pub fn app() {}
+            "#,
+        );
+        temp_dir.write(
+            "cf-helper/Cargo.toml",
+            r#"
+            [package]
+            name = "cf-helper"
+            version = "0.3.0"
+            edition = "2024"
+
+            [features]
+            default = ["base"]
+            base = []
+            grpc = []
+            otel = []
+            "#,
+        );
+        temp_dir.write(
+            "cf-helper/src/lib.rs",
+            r#"
+            pub fn helper() {}
+            "#,
+        );
+
+        let dependency_aliases =
+            HashMap::from([("cf-helper".to_owned(), "helper_alias".to_owned())]);
+        let dependencies = get_dependencies(temp_dir.path(), &dependency_aliases)
+            .expect("metadata should load dependencies");
+        let helper = dependencies
+            .get("helper_alias")
+            .expect("dependency should be present");
+
+        assert_eq!(helper.package.as_deref(), Some("cf-helper"));
+        assert_eq!(helper.version.as_deref(), Some("0.3.0"));
+        assert_eq!(
+            helper.features,
+            BTreeSet::from(["grpc".to_owned(), "otel".to_owned()])
         );
     }
 }

@@ -188,11 +188,7 @@ fn merge_dependency_metadata(existing: &mut CargoTomlDependency, incoming: &Carg
         _ => {}
     }
 
-    for feat in &incoming.features {
-        if !existing.features.contains(feat) {
-            existing.features.push(feat.clone());
-        }
-    }
+    existing.features.extend(incoming.features.iter().cloned());
 
     if existing.path.is_none() && incoming.path.is_some() {
         existing.path.clone_from(&incoming.path);
@@ -618,6 +614,7 @@ mod tests {
         should_replace_with_newer_semver,
     };
     use module_parser::{CargoTomlDependencies, CargoTomlDependency};
+    use std::collections::BTreeSet;
 
     #[test]
     fn replaces_workspace_dep_version_with_newer_semver() {
@@ -634,7 +631,7 @@ mod tests {
             "reqwest".to_owned(),
             CargoTomlDependency {
                 version: Some("0.13".to_owned()),
-                features: vec!["stream".to_owned()],
+                features: BTreeSet::from(["stream".to_owned()]),
                 ..CargoTomlDependency::default()
             },
         );
@@ -670,7 +667,7 @@ mod tests {
             CargoTomlDependency {
                 version: Some("0.13".to_owned()),
                 default_features: Some(false),
-                features: vec!["json".to_owned()],
+                features: BTreeSet::from(["json".to_owned()]),
                 ..CargoTomlDependency::default()
             },
         );

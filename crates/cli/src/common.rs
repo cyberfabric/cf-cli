@@ -5,7 +5,7 @@ use module_parser::{
     CargoToml, CargoTomlDependencies, CargoTomlDependency, Config, ConfigModuleMetadata, Package,
     get_dependencies, get_module_name_from_crate,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::{self, Display};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -217,24 +217,24 @@ static CARGO_DEPS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
 fn create_required_deps(path: &Path) -> anyhow::Result<CargoTomlDependencies> {
     let mut deps = get_dependencies(path, &CARGO_DEPS)?;
     if let Some(modkit) = deps.get_mut("modkit") {
-        modkit.features = vec!["bootstrap".to_owned()];
+        modkit.features.insert("bootstrap".to_owned());
     } else {
         deps.insert(
             "modkit".to_owned(),
             CargoTomlDependency {
                 package: Some("cf-modkit".to_owned()),
-                features: vec!["bootstrap".to_owned()],
+                features: BTreeSet::from(["bootstrap".to_owned()]),
                 ..Default::default()
             },
         );
     }
     if let Some(tokio) = deps.get_mut("tokio") {
-        tokio.features = vec!["full".to_owned()];
+        tokio.features.insert("full".to_owned());
     } else {
         deps.insert(
             "tokio".to_owned(),
             CargoTomlDependency {
-                features: vec!["full".to_owned()],
+                features: BTreeSet::from(["full".to_owned()]),
                 version: Some("1".to_owned()),
                 ..Default::default()
             },
