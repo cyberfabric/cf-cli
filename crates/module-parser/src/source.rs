@@ -50,13 +50,14 @@ pub fn extract_reexport_target(
 fn resolve_in_file(file_path: &Path, segments: &[&str]) -> anyhow::Result<ResolvedRustPath> {
     let content = fs::read_to_string(file_path)
         .with_context(|| format!("failed to read Rust source from {}", file_path.display()))?;
-    let parsed = syn::parse_file(&content)
+    let mut parsed = syn::parse_file(&content)
         .with_context(|| format!("failed to parse Rust source from {}", file_path.display()))?;
 
     if segments.is_empty() {
+        parsed.items = parsed.items.into_iter().filter_map(filter_item).collect();
         return Ok(ResolvedRustPath {
             source_path: file_path.to_path_buf(),
-            source: render_file(&filtered_file(parsed)),
+            source: render_file(&parsed),
         });
     }
 
@@ -220,11 +221,6 @@ fn module_path_override(module: &ItemMod) -> Option<String> {
             _ => None,
         }
     })
-}
-
-fn filtered_file(mut file: File) -> File {
-    file.items = file.items.into_iter().filter_map(filter_item).collect();
-    file
 }
 
 fn filter_inline_module(mut module: ItemMod) -> ItemMod {

@@ -50,6 +50,10 @@ pub fn resolve_source_from_metadata(
     path: &Path,
     query: &str,
 ) -> anyhow::Result<Option<ResolvedMetadataPath>> {
+    // If there's no Cargo.toml, there's no point to run cargo metadata
+    if !path.join("Cargo.toml").is_file() {
+        return Ok(None);
+    }
     let query = RustPathQuery::parse(query)?;
     let metadata = cargo_metadata::MetadataCommand::new()
         .current_dir(path)
