@@ -403,6 +403,7 @@ dependencies = [
  "clap",
  "dylint",
  "flate2",
+ "liquid",
  "module-parser",
  "notify",
  "reqwest",

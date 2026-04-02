@@ -52,6 +52,7 @@ cyberfabric
 │       ├── add
 │       ├── edit
 │       └── rm
+├── deploy
 ├── docs
 ├── lint
 ├── test
@@ -70,7 +71,10 @@ cyberfabric
   there is no default. For `build` and `run`, the CLI forwards this path to the generated server through the
   `CF_CLI_CONFIG` environment variable.
 - **[`--name <NAME>`]** For `build` and `run`, overrides the generated server project and binary name that would
-  otherwise default to the config filename stem.
+  otherwise default to the config filename stem. `deploy` uses the same name resolution for the generated executable and
+  output bundle.
+- **[`--template <KIND>`]** For `deploy`, selects which deployment asset set to render. Only `docker` is currently
+  implemented.
 - **[`-v, --verbose`]** Usually enables more logging or richer output.
 - **[name validation]** Config-managed names for modules, DB servers, and generated server names only allow letters,
   numbers, `-`, and `_`.
@@ -83,6 +87,7 @@ From the current implementation, the CLI is mainly for:
 - **[config management]** Enable modules and patch YAML config sections
 - **[server generation]** Generate a runnable Cargo project under `.cyberfabric/<name>/`
 - **[build/run]** Build or run that generated server
+- **[deploy bundle generation]** Generate a Docker build bundle under `.cyberfabric/deploy/<name>/`
 - **[source inspection]** Resolve Rust source for crates/items through workspace metadata or crates.io
 - **[tool bootstrap]** Install or upgrade `rustup`, `cargofmt`, and `clippy`
 
@@ -653,8 +658,55 @@ cyberfabric build -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --releas
 cyberfabric build -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --otel --clean
 ```
 
+### `deploy`
+
+Generate a Docker deployment bundle under `.cyberfabric/deploy/<name>/`.
+
+Synopsis:
+
 ```bash
-cyberfabric build -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --name demo-server
+cyberfabric deploy --template docker -c <CONFIG> [-p <PATH>] [--name <NAME>] [--output-dir <PATH>] [--force] [--image-name <NAME>] [--image-tag <TAG>] [--local-path <PATH>] [--git <URL>] [--subfolder <NAME>] [--branch <NAME>]
+```
+
+Arguments:
+
+- **[`--template docker`]** Render the Docker deployment bundle template
+- **[`-c, --config <CONFIG>`]** Required config file path
+- **[`-p, --path <PATH>`]** Workspace root, defaults to `.`
+- **[`--name <NAME>`]** Override the generated server project and executable name; defaults to the config filename stem
+- **[`--output-dir <PATH>`]** Override the deploy bundle output directory; defaults to `.cyberfabric/deploy/<name>/`
+- **[`--force`]** Allow replacing an existing custom output directory outside `.cyberfabric/deploy/`
+- **[`--image-name <NAME>`]** Optional image name used in the generated helper command
+- **[`--image-tag <TAG>`]** Optional image tag used in the generated helper command; defaults to `latest`
+- **[`--local-path <PATH>`]** Use a local deploy template repository instead of Git
+- **[`--git <URL>`]** Deploy template repo URL, defaults to `https://github.com/cyberfabric/cf-template-rust`
+- **[`--subfolder <NAME>`]** Template repo subfolder root, defaults to `Deploy`
+- **[`--branch <NAME>`]** Template repo branch, defaults to `main`
+
+Behavior:
+
+- **[reuses name resolution]** Uses the config filename stem by default, so `config/quickstart.yml` generates under `.cyberfabric/deploy/quickstart/`; `--name` overrides that default
+- **[recreates generated server structure]** Writes a generated server project under `.cyberfabric/deploy/<name>/.cyberfabric/<name>/` configured to load `/srv/config.yml` at runtime
+- **[copies workspace inputs]** Copies the workspace manifest, optional `Cargo.lock`, local workspace members, and dependency paths needed for Docker compilation
+- **[filters common junk entries]** Skips common local-only files and folders such as `.git`, `.vscode`, `target`, `.env*`, swap files, and Finder metadata when copying workspace paths into the bundle
+- **[rejects symlinked bundle inputs]** Fails fast if a copied workspace path contains a symlinked entry
+- **[copies config as `config.yml`]** Places the selected config file in the deploy bundle root as `config.yml`
+- **[renders from deploy templates]** Loads `Deploy/docker` templates from `cf-template-rust` and renders the `Dockerfile`
+- **[protects custom output directories]** Replaces existing bundle directories under `.cyberfabric/deploy/` automatically, but requires `--force` before deleting an existing custom `--output-dir`
+- **[generate-only]** Does not run `docker build`, push to a registry, or deploy to a cluster
+
+Examples:
+
+```bash
+cyberfabric deploy --template docker -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+```
+
+```bash
+cyberfabric deploy --template docker -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --name demo-server
+```
+
+```bash
+cyberfabric deploy --template docker -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --local-path ~/dev/cf-template-rust
 ```
 
 ### `lint`
@@ -759,6 +811,8 @@ cyberfabric docs --verbose tokio::sync
 ```bash
 cyberfabric init <path>
 cyberfabric mod add <background-worker|api-db-handler|rest-gateway> [-p <workspace>]
+
+cyberfabric deploy --template docker [-p <workspace>] -c <config>
 
 cyberfabric config mod list [-p <workspace>] -c <config>
 cyberfabric config mod add <module> [-p <workspace>] -c <config>
