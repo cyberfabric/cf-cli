@@ -22,9 +22,8 @@ pub struct ResolvedMetadataPath {
     pub source: String,
 }
 
-pub fn get_module_name_from_crate(path: &PathBuf) -> anyhow::Result<HashMap<String, ConfigModule>> {
+pub fn get_module_name_from_crate() -> anyhow::Result<HashMap<String, ConfigModule>> {
     let res = cargo_metadata::MetadataCommand::new()
-        .current_dir(path)
         .no_deps()
         .exec()
         .context("failed to run cargo metadata")?;

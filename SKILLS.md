@@ -207,7 +207,7 @@ cyberfabric config mod list -c <CONFIG> [-p <PATH>] [--system] [--verbose] [--re
 Arguments:
 
 - **[`-c, --config <CONFIG>`]** Required config file path
-- **[`-p, --path <PATH>`]** Workspace root, defaults to `.`
+- **[`-p, --path <PATH>`]** Optional workspace directory
 - **[`-s, --system`]** Also print built-in system registry modules
 - **[`-v, --verbose`]** Print full metadata
 - **[`--registry <REGISTRY>`]** Registry used only for verbose system lookups, defaults to `crates.io`
@@ -557,7 +557,7 @@ Generate a server project under `.cyberfabric/<name>/` and run it.
 Synopsis:
 
 ```bash
-cyberfabric run -c <CONFIG> [-p <PATH>] [--name <NAME>] [--watch] [--otel] [--release] [--clean]
+cargo cyberfabric run -c <CONFIG> [-p <PATH>] [--name <NAME>] [--watch] [--otel] [--release] [--clean]
 ```
 
 Arguments:
@@ -586,19 +586,19 @@ Behavior:
 Examples:
 
 ```bash
-cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+cargo cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
 ```
 
 ```bash
-cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --watch
+cargo cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --watch
 ```
 
 ```bash
-cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --otel --release --clean
+cargo cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --otel --release --clean
 ```
 
 ```bash
-cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --name demo-server
+cargo cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --name demo-server
 ```
 
 ### `build`
@@ -695,7 +695,7 @@ Current status:
 cyberfabric mod init /tmp/cf-demo
 cyberfabric mod add background-worker -p /tmp/cf-demo
 cyberfabric config mod add background-worker -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
-cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+cargo cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
 ```
 
 ### Add a module and wire a shared DB server
@@ -705,7 +705,7 @@ cyberfabric mod add api-db-handler -p /tmp/cf-demo
 cyberfabric config db add primary -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --engine postgres --host localhost --port 5432 --user app --password '${DB_PASSWORD}' --dbname appdb
 cyberfabric config mod add api-db-handler -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
 cyberfabric config mod db add api-db-handler -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --server primary
-cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --watch
+cargo cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --watch
 ```
 
 ### Inspect source for a dependency
@@ -728,21 +728,21 @@ cyberfabric docs --verbose tokio::sync
 
 ```bash
 cyberfabric mod init <path>
-cyberfabric mod add <background-worker|api-db-handler|rest-gateway> -p <workspace>
+cyberfabric mod add <background-worker|api-db-handler|rest-gateway> [-p <workspace>]
 
-cyberfabric config mod list -p <workspace> -c <config>
-cyberfabric config mod add <module> -p <workspace> -c <config>
-cyberfabric config mod rm <module> -p <workspace> -c <config>
-cyberfabric config mod db add <module> -p <workspace> -c <config> ...
-cyberfabric config mod db edit <module> -p <workspace> -c <config> ...
-cyberfabric config mod db rm <module> -p <workspace> -c <config>
+cyberfabric config mod list [-p <workspace>] -c <config>
+cyberfabric config mod add <module> [-p <workspace>] -c <config>
+cyberfabric config mod rm <module> [-p <workspace>] -c <config>
+cyberfabric config mod db add <module> [-p <workspace>] -c <config> ...
+cyberfabric config mod db edit <module> [-p <workspace>] -c <config> ...
+cyberfabric config mod db rm <module> [-p <workspace>] -c <config>
 
-cyberfabric config db add <name> -p <workspace> -c <config> ...
-cyberfabric config db edit <name> -p <workspace> -c <config> ...
-cyberfabric config db rm <name> -p <workspace> -c <config>
+cyberfabric config db add <name> [-p <workspace>] -c <config> ...
+cyberfabric config db edit <name> [-p <workspace>] -c <config> ...
+cyberfabric config db rm <name> [-p <workspace>] -c <config>
 
 cyberfabric docs [-p <path>] [--version <version>] [--clean] [<query>]
 cyberfabric tools --all
-cyberfabric run -p <workspace> -c <config> [--name <name>] [--watch]
-cyberfabric build -p <workspace> -c <config> [--name <name>]
+cyberfabric run [-p <workspace>] -c <config> [--name <name>] [--watch]
+cyberfabric build [-p <workspace>] -c <config> [--name <name>]
 ```

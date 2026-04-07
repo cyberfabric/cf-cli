@@ -1,5 +1,5 @@
 use super::{load_config, resolve_modules_context, save_config, validate_module_name};
-use crate::common::{PathConfigArgs, workspace_root};
+use crate::common::PathConfigArgs;
 use crate::config::app_config::AppConfig;
 use anyhow::{Context, bail};
 use clap::Args;
@@ -107,19 +107,15 @@ fn merge_module_metadata(
 }
 
 fn discover_local_modules(args: &AddArgs) -> anyhow::Result<HashMap<String, ConfigModule>> {
-    let workspace_path = workspace_root()?;
-    match get_module_name_from_crate(&workspace_path) {
+    match get_module_name_from_crate() {
         Ok(modules) => Ok(modules),
         Err(_) if args.package.is_some() && args.module_version.is_some() => {
             // Allow remote module additions even if the provided -p path is not a Cargo workspace.
             Ok(HashMap::new())
         }
         Err(err) => Err(err).with_context(|| {
-            format!(
-                "failed to discover local modules at {}. \
-                 if this is a remote module, provide both --package and --module-version",
-                workspace_path.display()
-            )
+            "failed to discover local modules. if this is a remote module, provide both \
+            --package and --module-version"
         }),
     }
 }

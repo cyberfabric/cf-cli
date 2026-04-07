@@ -163,8 +163,7 @@ pub fn cargo_command(subcommand: &str, path: &Path, otel: bool, release: bool) -
 
 pub fn get_config(config_path: &Path) -> anyhow::Result<Config> {
     let mut config = get_config_from_path(config_path)?;
-    let workspace_path = workspace_root()?;
-    let mut members = get_module_name_from_crate(&workspace_path)?;
+    let mut members = get_module_name_from_crate()?;
 
     config.modules.iter_mut().for_each(|module| {
         if let Some(module_metadata) = members.remove(module.0.as_str()) {
