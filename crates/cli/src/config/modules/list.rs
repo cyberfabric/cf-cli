@@ -1,5 +1,5 @@
 use super::{SYSTEM_REGISTRY_MODULES, SystemRegistryModule, load_config, resolve_modules_context};
-use crate::common::{PathConfigArgs, Registry};
+use crate::common::{PathConfigArgs, Registry, workspace_root};
 use crate::config::app_config::ModuleConfig;
 use anyhow::{Context, bail};
 use clap::Args;
@@ -37,7 +37,8 @@ pub struct ListArgs {
 impl ListArgs {
     pub(super) fn run(&self) -> anyhow::Result<()> {
         let context = resolve_modules_context(&self.path_config)?;
-        let local_modules = discover_workspace_modules(&context.workspace_path)?;
+        let workspace_path = workspace_root()?;
+        let local_modules = discover_workspace_modules(&workspace_path)?;
         let config = load_config(&context.config_path)?;
         let enabled_modules: BTreeSet<_> = config.modules.keys().map(String::as_str).collect();
 
@@ -67,7 +68,7 @@ impl ListArgs {
         }
 
         println!();
-        println!("Workspace modules ({}):", context.workspace_path.display());
+        println!("Workspace modules ({}):", workspace_path.display());
         if local_modules.is_empty() {
             println!("  (none)");
         } else {

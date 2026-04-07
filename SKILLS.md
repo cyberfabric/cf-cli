@@ -62,9 +62,11 @@ cyberfabric
 
 ## Shared Argument Patterns
 
-- **[`-p, --path <PATH>`]** Workspace root path. Defaults to `.` in most commands that work on a workspace.
-- **[`-c, --config <PATH>`]** Config file path. This is required anywhere `PathConfigArgs` is used because there is no
-  default.
+- **[`-p, --path <PATH>`]** Optional workspace path. When provided to `config ...`, `build`, and `run` commands, the CLI
+  immediately changes the current working directory to this directory. Relative config paths and generated project
+  locations then resolve from that directory. When omitted, the current working directory is left unchanged.
+- **[`-c, --config <PATH>`]** Config file path. This is required for `config ...`, `build`, and `run` commands because
+  there is no default.
 - **[`--name <NAME>`]** For `build` and `run`, overrides the generated server project and binary name that would
   otherwise default to the config filename stem.
 - **[`-v, --verbose`]** Usually enables more logging or richer output.
@@ -214,6 +216,8 @@ Behavior:
 
 - **[discovers local modules]** Scans the workspace for module crates
 - **[loads configured modules]** Reads enabled modules from the config file
+- **[path activation]** If `-p/--path` is provided, the CLI first changes the current working directory there before
+  resolving `-c/--config`
 - **[marks enabled locals]** Shows when a workspace module is enabled in config
 - **[shows missing locals]** Shows when a configured module is not present in the workspace
 - **[optional crates.io fetch]** If both `--system` and `--verbose` are used, the CLI fetches registry metadata and
@@ -266,7 +270,7 @@ Arguments:
 
 - **[`<module>`]** Module name in the config
 - **[`-c, --config <CONFIG>`]** Required config file path
-- **[`-p, --path <PATH>`]** Workspace root, defaults to `.`
+- **[`-p, --path <PATH>`]** Optional workspace directory
 - **[`--package <NAME>`]** Override metadata package name
 - **[`--module-version <VER>`]** Override metadata version
 - **[`--default-features <BOOL>`]** Persist Cargo `default_features`
@@ -276,6 +280,8 @@ Arguments:
 Behavior:
 
 - **[upsert]** Creates or updates `modules.<module>`
+- **[path activation]** If `-p/--path` is provided, Clap changes the current working directory while parsing that value,
+  before `-c/--config` is resolved
 - **[local-first discovery]** Tries to discover module metadata from the workspace
 - **[remote module support]** If the module is not local, you must provide both `--package` and `--module-version`
 - **[portable metadata]** Local filesystem paths are intentionally not persisted into config metadata
@@ -313,6 +319,8 @@ cyberfabric config mod rm -c <CONFIG> [-p <PATH>] <module>
 
 Behavior:
 
+- **[path activation]** If `-p/--path` is provided, Clap changes the current working directory while parsing that value,
+  before `-c/--config` is resolved
 - **[strict removal]** Fails if the module is not present in config
 
 Example:
@@ -353,6 +361,8 @@ Shared DB flags:
 
 Rules:
 
+- **[path activation]** If `-p/--path` is provided, each subcommand changes the current working directory while Clap is
+  parsing that value, before `-c/--config` is resolved
 - **[payload required]** `add` and `edit` require at least one DB-related field
 - **[module must exist]** `add` requires the module already exist in config and recommends `config mod add` first
 - **[edit requires existing DB config]** `edit` fails if no module DB config exists yet
@@ -396,6 +406,8 @@ cyberfabric config db rm   -c <CONFIG> [-p <PATH>] <name>
 
 Behavior:
 
+- **[path activation]** If `-p/--path` is provided, each subcommand changes the current working directory while Clap is
+  parsing that value, before `-c/--config` is resolved
 - **[server name]** Stored under `database.servers.<name>`
 - **[add is upsert]** `add` creates or patches an existing server entry
 - **[edit is strict]** `edit` requires the server to already exist
@@ -551,7 +563,7 @@ cyberfabric run -c <CONFIG> [-p <PATH>] [--name <NAME>] [--watch] [--otel] [--re
 Arguments:
 
 - **[`-c, --config <CONFIG>`]** Required config file path
-- **[`-p, --path <PATH>`]** Workspace root, defaults to `.`
+- **[`-p, --path <PATH>`]** Optional workspace directory
 - **[`--name <NAME>`]** Override the generated server project and binary name; defaults to the config filename stem
 - **[`-w, --watch`]** Re-run when watched inputs change
 - **[`--otel`]** Pass Cargo feature `otel`
@@ -562,6 +574,8 @@ Behavior:
 
 - **[name resolution]** Uses the config filename stem by default, so `config/quickstart.yml` generates under
   `.cyberfabric/quickstart/`; `--name` overrides that default
+- **[path activation]** If `-p/--path` is provided, Clap changes the current working directory while parsing that value,
+  before `-c/--config` is resolved and `.cyberfabric/<name>/` is generated
 - **[generates server structure]** Writes `.cyberfabric/<name>/Cargo.toml`, `.cyberfabric/<name>/.cargo/config.toml`,
   and `.cyberfabric/<name>/src/main.rs`
 - **[loads config dependencies]** Builds dependencies from the config and local module metadata
@@ -600,7 +614,7 @@ cyberfabric build -c <CONFIG> [-p <PATH>] [--name <NAME>] [--otel] [--release] [
 Arguments:
 
 - **[`-c, --config <CONFIG>`]** Required config file path
-- **[`-p, --path <PATH>`]** Workspace root, defaults to `.`
+- **[`-p, --path <PATH>`]** Optional workspace directory
 - **[`--name <NAME>`]** Override the generated server project and binary name; defaults to the config filename stem
 - **[`--otel`]** Pass Cargo feature `otel`
 - **[`-r, --release`]** Use release mode
@@ -611,6 +625,8 @@ Behavior:
 - **[generates before build]** Recreates the generated server project before invoking Cargo
 - **[name resolution]** Uses the config filename stem by default, so `config/quickstart.yml` builds from
   `.cyberfabric/quickstart/`; `--name` overrides that default
+- **[path activation]** If `-p/--path` is provided, Clap changes the current working directory while parsing that value,
+  before `-c/--config` is resolved and `.cyberfabric/<name>/` is generated
 - **[builds inside `.cyberfabric/<name>`]** Executes `cargo build` in the generated directory
 
 Examples:

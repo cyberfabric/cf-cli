@@ -15,9 +15,9 @@ pub struct RunArgs {
 
 impl RunArgs {
     pub fn run(&self) -> anyhow::Result<()> {
-        let (path, config_path, project_name) = self.br_args.resolve_workspace_and_config()?;
+        let (config_path, project_name) = self.br_args.resolve_config_and_name()?;
 
-        let rl = run_loop::RunLoop::new(path, config_path, project_name);
+        let rl = run_loop::RunLoop::new(config_path, project_name);
         run_loop::OTEL.store(self.br_args.otel, std::sync::atomic::Ordering::Relaxed);
         run_loop::RELEASE.store(self.br_args.release, std::sync::atomic::Ordering::Relaxed);
 

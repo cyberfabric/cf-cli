@@ -1,7 +1,5 @@
-use super::{
-    ModulesContext, load_config, resolve_modules_context, save_config, validate_module_name,
-};
-use crate::common::PathConfigArgs;
+use super::{load_config, resolve_modules_context, save_config, validate_module_name};
+use crate::common::{PathConfigArgs, workspace_root};
 use crate::config::app_config::AppConfig;
 use anyhow::{Context, bail};
 use clap::Args;
@@ -37,7 +35,7 @@ impl AddArgs {
         let context = resolve_modules_context(&self.path_config)?;
 
         let mut config = load_config(&context.config_path)?;
-        let local_modules = discover_local_modules(&context, self)?;
+        let local_modules = discover_local_modules(self)?;
         let metadata = build_required_metadata(self, local_modules.get(&self.module))?;
 
         upsert_module_config(&mut config, self, metadata);
@@ -108,11 +106,9 @@ fn merge_module_metadata(
     }
 }
 
-fn discover_local_modules(
-    context: &ModulesContext,
-    args: &AddArgs,
-) -> anyhow::Result<HashMap<String, ConfigModule>> {
-    match get_module_name_from_crate(&context.workspace_path) {
+fn discover_local_modules(args: &AddArgs) -> anyhow::Result<HashMap<String, ConfigModule>> {
+    let workspace_path = workspace_root()?;
+    match get_module_name_from_crate(&workspace_path) {
         Ok(modules) => Ok(modules),
         Err(_) if args.package.is_some() && args.module_version.is_some() => {
             // Allow remote module additions even if the provided -p path is not a Cargo workspace.
@@ -122,7 +118,7 @@ fn discover_local_modules(
             format!(
                 "failed to discover local modules at {}. \
                  if this is a remote module, provide both --package and --module-version",
-                context.workspace_path.display()
+                workspace_path.display()
             )
         }),
     }
@@ -195,7 +191,7 @@ mod tests {
     fn build_required_metadata_uses_local_package_and_version() {
         let args = AddArgs {
             path_config: PathConfigArgs {
-                path: PathBuf::from("."),
+                path: Some(PathBuf::from(".")),
                 config: PathBuf::from("."),
             },
             module: "demo".to_owned(),
@@ -227,7 +223,7 @@ mod tests {
     fn build_required_metadata_requires_remote_package() {
         let args = AddArgs {
             path_config: PathConfigArgs {
-                path: PathBuf::from("."),
+                path: Some(PathBuf::from(".")),
                 config: PathBuf::from("."),
             },
             module: "demo".to_owned(),
@@ -251,7 +247,7 @@ mod tests {
     fn build_required_metadata_requires_remote_version() {
         let args = AddArgs {
             path_config: PathConfigArgs {
-                path: PathBuf::from("."),
+                path: Some(PathBuf::from(".")),
                 config: PathBuf::from("."),
             },
             module: "demo".to_owned(),
@@ -275,7 +271,7 @@ mod tests {
     fn build_required_metadata_accepts_remote_with_package_and_version() {
         let args = AddArgs {
             path_config: PathConfigArgs {
-                path: PathBuf::from("."),
+                path: Some(PathBuf::from(".")),
                 config: PathBuf::from("."),
             },
             module: "demo".to_owned(),
@@ -312,7 +308,7 @@ mod tests {
 
         let args = AddArgs {
             path_config: PathConfigArgs {
-                path: PathBuf::from("."),
+                path: Some(PathBuf::from(".")),
                 config: PathBuf::from("."),
             },
             module: "demo".to_owned(),

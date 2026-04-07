@@ -6,6 +6,7 @@ use module_parser::{
     get_dependencies, get_module_name_from_crate,
 };
 use std::collections::{BTreeSet, HashMap};
+use std::env;
 use std::fmt::{self, Display};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,11 +16,24 @@ use std::sync::LazyLock;
 #[derive(Args)]
 pub struct PathConfigArgs {
     /// Path to the module workspace root
-    #[arg(short = 'p', long, default_value = ".")]
-    pub path: PathBuf,
+    #[arg(short = 'p', long, value_parser = parse_and_chdir)]
+    pub path: Option<PathBuf>,
     /// Path to the config file
     #[arg(short = 'c', long)]
     pub config: PathBuf,
+}
+
+fn parse_and_chdir(s: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(s);
+
+    if !path.is_dir() {
+        return Err(format!("not a directory: {}", path.display()));
+    }
+
+    env::set_current_dir(&path)
+        .map_err(|e| format!("failed to change directory to {}: {e}", path.display()))?;
+
+    Ok(path)
 }
 
 impl PathConfigArgs {
@@ -28,12 +42,10 @@ impl PathConfigArgs {
             .canonicalize()
             .context("can't canonicalize config")
     }
+}
 
-    pub fn resolve_path(&self) -> anyhow::Result<PathBuf> {
-        self.path
-            .canonicalize()
-            .context("can't canonicalize workspace path")
-    }
+pub fn workspace_root() -> anyhow::Result<PathBuf> {
+    env::current_dir().context("can't determine current working directory")
 }
 
 #[derive(Args)]
@@ -76,15 +88,14 @@ impl Display for Registry {
 }
 
 impl BuildRunArgs {
-    pub fn resolve_workspace_and_config(&self) -> anyhow::Result<(PathBuf, PathBuf, String)> {
-        let path = self.path_config.resolve_path()?;
+    pub fn resolve_config_and_name(&self) -> anyhow::Result<(PathBuf, String)> {
         let config_path = self.path_config.resolve_config()?;
         let project_name = resolve_generated_project_name(&config_path, self.name.as_deref())?;
         if self.clean {
-            remove_from_file_structure(&path, &project_name, "Cargo.lock")?;
+            remove_from_file_structure(&project_name, "Cargo.lock")?;
         }
 
-        Ok((path, config_path, project_name))
+        Ok((config_path, project_name))
     }
 }
 
@@ -150,9 +161,10 @@ pub fn cargo_command(subcommand: &str, path: &Path, otel: bool, release: bool) -
     cmd
 }
 
-pub fn get_config(path: &Path, config_path: &Path) -> anyhow::Result<Config> {
+pub fn get_config(config_path: &Path) -> anyhow::Result<Config> {
     let mut config = get_config_from_path(config_path)?;
-    let mut members = get_module_name_from_crate(&path.to_path_buf())?;
+    let workspace_path = workspace_root()?;
+    let mut members = get_module_name_from_crate(&workspace_path)?;
 
     config.modules.iter_mut().for_each(|module| {
         if let Some(module_metadata) = members.remove(module.0.as_str()) {
@@ -214,8 +226,9 @@ static CARGO_DEPS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
     res
 });
 
-fn create_required_deps(path: &Path) -> anyhow::Result<CargoTomlDependencies> {
-    let mut deps = get_dependencies(path, &CARGO_DEPS)?;
+fn create_required_deps() -> anyhow::Result<CargoTomlDependencies> {
+    let workspace_path = workspace_root()?;
+    let mut deps = get_dependencies(&workspace_path, &CARGO_DEPS)?;
     if let Some(modkit) = deps.get_mut("modkit") {
         modkit.features.insert("bootstrap".to_owned());
     } else {
@@ -244,13 +257,12 @@ fn create_required_deps(path: &Path) -> anyhow::Result<CargoTomlDependencies> {
 }
 
 pub fn generate_server_structure(
-    path: &Path,
     project_name: &str,
     config_path: &Path,
     current_dependencies: &CargoTomlDependencies,
 ) -> anyhow::Result<()> {
     let mut dependencies = current_dependencies.clone();
-    dependencies.extend(create_required_deps(path)?);
+    dependencies.extend(create_required_deps()?);
     let cargo_toml = CargoToml {
         package: Package {
             name: project_name.to_owned(),
@@ -266,10 +278,9 @@ pub fn generate_server_structure(
         .build()?
         .parse(CARGO_SERVER_MAIN)?;
 
-    create_file_structure(path, project_name, "Cargo.toml", &cargo_toml_str)?;
-    create_file_structure(path, project_name, ".cargo/config.toml", CARGO_CONFIG_TOML)?;
+    create_file_structure(project_name, "Cargo.toml", &cargo_toml_str)?;
+    create_file_structure(project_name, ".cargo/config.toml", CARGO_CONFIG_TOML)?;
     create_file_structure(
-        path,
         project_name,
         "src/main.rs",
         &main_template.render(&prepare_cargo_server_main(
@@ -281,18 +292,17 @@ pub fn generate_server_structure(
     Ok(())
 }
 
-pub fn generated_project_dir(path: &Path, project_name: &str) -> PathBuf {
-    PathBuf::from(path).join(BASE_PATH).join(project_name)
+pub fn generated_project_dir(project_name: &str) -> anyhow::Result<PathBuf> {
+    Ok(workspace_root()?.join(BASE_PATH).join(project_name))
 }
 
 fn create_file_structure(
-    path: &Path,
     project_name: &str,
     relative_path: &str,
     contents: &str,
 ) -> anyhow::Result<()> {
     use std::io::Write;
-    let path = generated_project_dir(path, project_name).join(relative_path);
+    let path = generated_project_dir(project_name)?.join(relative_path);
     fs::create_dir_all(
         path.parent().context(
             "this should be unreachable, the parent for the file structure always exists",
@@ -309,12 +319,8 @@ fn create_file_structure(
         .context("can't write to file")
 }
 
-fn remove_from_file_structure(
-    path: &Path,
-    project_name: &str,
-    relative_path: &str,
-) -> anyhow::Result<()> {
-    let path = generated_project_dir(path, project_name).join(relative_path);
+fn remove_from_file_structure(project_name: &str, relative_path: &str) -> anyhow::Result<()> {
+    let path = generated_project_dir(project_name)?.join(relative_path);
     if path.exists() {
         fs::remove_file(path).context("can't remove file")?;
     }

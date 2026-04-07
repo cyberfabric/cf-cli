@@ -10,13 +10,12 @@ pub struct BuildArgs {
 
 impl BuildArgs {
     pub fn run(&self) -> anyhow::Result<()> {
-        let (path, config_path, project_name) =
-            self.build_run_args.resolve_workspace_and_config()?;
+        let (config_path, project_name) = self.build_run_args.resolve_config_and_name()?;
 
-        let dependencies = common::get_config(&path, &config_path)?.create_dependencies()?;
-        common::generate_server_structure(&path, &project_name, &config_path, &dependencies)?;
+        let dependencies = common::get_config(&config_path)?.create_dependencies()?;
+        common::generate_server_structure(&project_name, &config_path, &dependencies)?;
 
-        let cargo_dir = common::generated_project_dir(&path, &project_name);
+        let cargo_dir = common::generated_project_dir(&project_name)?;
         let status = common::cargo_command(
             "build",
             &cargo_dir,

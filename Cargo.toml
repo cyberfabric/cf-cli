@@ -17,17 +17,17 @@ module-parser = { path = "crates/module-parser" }
 anyhow = { version = "1.0" }
 clap = { version = "4.5", features = ["derive"] }
 
-cargo-generate = { version = "0.23.7" }
+cargo-generate = { version = "0.23.8" }
 cargo_metadata = { version = "0.23.1" }
 
 liquid = { version = "~0.26" } # align with cargo-generate
 
 serde = { version = "1.0", features = ["derive"] }
-serde-saphyr = { version = "0.0.22" }
+serde-saphyr = { version = "0.0.23" }
 serde_json = { version = "1.0" }
 
-toml = { version = "1.0.7", features = ["serde"] }
-toml_edit = "0.25.5"
+toml = { version = "1.1.2", features = ["serde"] }
+toml_edit = "0.25.10"
 
 notify = { version = "8.2", features = ["serde"] }
 reqwest = { version = "0.13", features = ["json"] }

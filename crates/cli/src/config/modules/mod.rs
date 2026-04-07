@@ -96,7 +96,6 @@ pub enum ModulesCommand {
 }
 
 pub(super) struct ModulesContext {
-    workspace_path: PathBuf,
     config_path: PathBuf,
 }
 
@@ -115,7 +114,6 @@ pub(super) fn resolve_modules_context(
     path_config: &PathConfigArgs,
 ) -> anyhow::Result<ModulesContext> {
     Ok(ModulesContext {
-        workspace_path: path_config.resolve_path()?,
         config_path: path_config.resolve_config()?,
     })
 }
