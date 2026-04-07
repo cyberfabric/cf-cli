@@ -6,8 +6,7 @@ Command-line interface for development and management of CyberFabric modules.
 
 ### Prerequisites
 
-- Rust toolchain with `cargo`
-- A local clone of this repository
+- Rust toolchain with `cargo` (https://rust-lang.org/tools/install/)
 
 ### Install the CLI
 
@@ -19,7 +18,7 @@ This workspace exposes two binaries:
 Install both from the repository root:
 
 ```bash
-cargo install --path crates/cli --bin cyberfabric --bin cargo-cyberfabric
+cargo install --git https://github.com/cyberfabric/cf-cli
 ```
 
 After installation, you can use either form:
@@ -32,11 +31,40 @@ cyberfabric --help
 cargo cyberfabric --help
 ```
 
-For local development without installing:
+## Typical usage flow
+
+First you can create a new workspace with a basic hello-world module with:
 
 ```bash
-cargo run -p cli -- --help
+cyberfabric mod init /tmp/cf-demo
 ```
+
+You can run it straight away and you will see in the console a hello world message:
+
+```bash
+cd /tmp/cf-demo
+# When running or building we recommend using cargo-cyberfabric binary instead of the standalone binary.
+cargo cyberfabric run -c ./config/quickstart.yml
+```
+
+Second, add a module to the workspace. You can choose among a set of templates: `background-worker`, `api-db-handler`,
+and `rest-gateway`. For this example we'll use background-worker:
+
+```bash
+# bring the module to the workspace
+cyberfabric mod add background-worker
+# add the module to the config
+cyberfabric config mod add background-worker -c ./config/quickstart.yml
+```
+
+Now, we run it again. We'll see every couple of seconds, the background worker printing a random Pokémon:
+
+```bash
+cargo cyberfabric run -c ./config/quickstart.yml
+```
+
+You can run the tool from any directory by specifying the path to the workspace with the `-p` flag. The default will be
+the current directory. `cargo cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml`
 
 ## What the CLI can do
 
@@ -76,22 +104,17 @@ You need to provide the path to the configuration file with the `-c` flag. `-c c
 - `lint` is declared but not implemented yet
 - `test` is declared but not implemented yet
 
-## Typical usage flow
-
-Create a workspace, add a module, configure it, and run it:
-
-```bash
-cyberfabric mod init /tmp/cf-demo
-cyberfabric mod add background-worker -p /tmp/cf-demo
-cyberfabric config mod add background-worker -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
-cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
-```
-
-The `-p` is to specify the path. If you don't provide it, the default will be the current directory.
-
 ## Command overview
 
 For the full command surface, arguments, and examples, check [SKILLS.md](SKILLS.md).
+
+## Local development
+
+To run the CLI from source:
+
+```bash
+cargo run -p cli -- --help
+```
 
 ## License
 

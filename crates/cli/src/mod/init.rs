@@ -3,6 +3,9 @@ use cargo_generate::{GenerateArgs, TemplatePath, generate};
 use clap::Args;
 use std::path::PathBuf;
 
+/// Content of SKILLS.md embedded at compile time
+const SKILLS_MD_CONTENT: &str = include_str!("../../../../SKILLS.md");
+
 #[derive(Args)]
 pub struct InitArgs {
     /// Path to initialize the project
@@ -70,6 +73,15 @@ impl InitArgs {
             ..Default::default()
         })
         .context("can't generate project")?;
+
+        // Create .agents/skills/cyberfabric/ directory and write SKILLS.md
+        let agents_skills_dir = self.path.join(".agents").join("skills").join("cyberfabric");
+        std::fs::create_dir_all(&agents_skills_dir)
+            .context("failed to create .agents/skills/cyberfabric/ directory")?;
+        let skills_md_path = agents_skills_dir.join("SKILLS.md");
+        std::fs::write(&skills_md_path, SKILLS_MD_CONTENT)
+            .context("failed to write SKILLS.md to .agents/skills/cyberfabric/")?;
+
         println!("Project initialized at {}", self.path.display());
         Ok(())
     }
