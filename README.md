@@ -36,7 +36,7 @@ cargo cyberfabric --help
 First you can create a new workspace with a basic hello-world module with:
 
 ```bash
-cyberfabric mod init /tmp/cf-demo
+cyberfabric init /tmp/cf-demo
 ```
 
 You can run it straight away and you will see in the console a hello world message:
@@ -46,6 +46,9 @@ cd /tmp/cf-demo
 # When running or building we recommend using cargo-cyberfabric binary instead of the standalone binary.
 cargo cyberfabric run -c ./config/quickstart.yml
 ```
+
+The generated server reads its config path from the `CF_CLI_CONFIG` environment variable. `cyberfabric build` and
+`cyberfabric run` set this automatically for the generated project.
 
 Second, add a module to the workspace. You can choose among a set of templates: `background-worker`, `api-db-handler`,
 and `rest-gateway`. For this example we'll use background-worker:
@@ -72,7 +75,7 @@ The current CLI surface is centered on CyberFabric workspace setup, configuratio
 
 ### Workspace scaffolding
 
-- `mod init` initializes a new CyberFabric workspace from a template
+- `init` initializes a new CyberFabric workspace from a template
 - `mod add` adds module templates such as `background-worker`, `api-db-handler`, and `rest-gateway`
 
 ### Configuration management
@@ -86,10 +89,21 @@ You need to provide the path to the configuration file with the `-c` flag. `-c c
 
 ### Build and run generated servers
 
-- `build` generates a runnable Cargo project under `.cyberfabric/` and builds it based on the `-c` configuration
+- `build` generates a runnable Cargo project under `.cyberfabric/<CONFIG_NAME>` and builds it based on the `-c`
+  configuration
   provided.
 - `run` generates the same project and runs it. You can provide `-w` to enable watch mode and/or `--otel` to enable
   OpenTelemetry.
+
+The generated `src/main.rs` does not embed the config path. Instead, the generated server reads it from
+`CF_CLI_CONFIG` at runtime. The CLI sets that variable for `build` and `run`, but if you execute `.cyberfabric/<name>/`
+or the compiled binary yourself, you need to set `CF_CLI_CONFIG` manually.
+
+Example manual run of the generated project:
+
+```bash
+CF_CLI_CONFIG=/tmp/cf-demo/config/quickstart.yml cargo run --manifest-path /tmp/cf-demo/.cyberfabric/quickstart/Cargo.toml
+```
 
 ### Source inspection
 

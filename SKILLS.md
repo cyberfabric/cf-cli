@@ -19,25 +19,25 @@ The crate exposes two equivalent entrypoints:
 Examples:
 
 ```bash
-cyberfabric mod init /tmp/my-app
+cyberfabric init /tmp/my-app
 ```
 
 ```bash
-cargo cyberfabric mod init /tmp/my-app
+cargo cyberfabric init /tmp/my-app
 ```
 
 For local development in this repo:
 
 ```bash
-cargo run -p cli -- mod init /tmp/my-app
+cargo run -p cli -- init /tmp/my-app
 ```
 
 ## Command Tree
 
 ```text
 cyberfabric
+├── init
 ├── mod
-│   ├── init
 │   └── add
 ├── config
 │   ├── mod
@@ -66,7 +66,8 @@ cyberfabric
   immediately changes the current working directory to this directory. Relative config paths and generated project
   locations then resolve from that directory. When omitted, the current working directory is left unchanged.
 - **[`-c, --config <PATH>`]** Config file path. This is required for `config ...`, `build`, and `run` commands because
-  there is no default.
+  there is no default. For `build` and `run`, the CLI forwards this path to the generated server through the
+  `CF_CLI_CONFIG` environment variable.
 - **[`--name <NAME>`]** For `build` and `run`, overrides the generated server project and binary name that would
   otherwise default to the config filename stem.
 - **[`-v, --verbose`]** Usually enables more logging or richer output.
@@ -86,18 +87,14 @@ From the current implementation, the CLI is mainly for:
 
 ## Top-Level Commands
 
-### `mod`
-
-Scaffolds workspace content from templates.
-
-#### `mod init`
+### `init`
 
 Initialize a new project from the default CyberFabric template repo or a local template.
 
 Synopsis:
 
 ```bash
-cyberfabric mod init <path> [--verbose] [--local-path <PATH>] [--git <URL>] [--subfolder <NAME>] [--branch <NAME>]
+cyberfabric init <path> [--verbose] [--local-path <PATH>] [--git <URL>] [--subfolder <NAME>] [--branch <NAME>]
 ```
 
 Arguments:
@@ -119,16 +116,20 @@ Behavior:
 Examples:
 
 ```bash
-cyberfabric mod init /tmp/cf-demo
+cyberfabric init /tmp/cf-demo
 ```
 
 ```bash
-cyberfabric mod init /tmp/cf-demo --git https://github.com/cyberfabric/cf-template-rust --branch main --subfolder Init
+cyberfabric init /tmp/cf-demo --git https://github.com/cyberfabric/cf-template-rust --branch main --subfolder Init
 ```
 
 ```bash
-cyberfabric mod init /tmp/cf-demo --local-path ~/dev/cf-template-rust
+cyberfabric init /tmp/cf-demo --local-path ~/dev/cf-template-rust
 ```
+
+### `mod`
+
+Scaffolds workspace content from templates.
 
 #### `mod add`
 
@@ -578,10 +579,14 @@ Behavior:
   before `-c/--config` is resolved and `.cyberfabric/<name>/` is generated
 - **[generates server structure]** Writes `.cyberfabric/<name>/Cargo.toml`, `.cyberfabric/<name>/.cargo/config.toml`,
   and `.cyberfabric/<name>/src/main.rs`
+- **[runtime config handoff]** The generated `src/main.rs` reads the config path from `CF_CLI_CONFIG`, and
+  `cyberfabric run` sets that environment variable automatically before invoking `cargo run`
 - **[loads config dependencies]** Builds dependencies from the config and local module metadata
 - **[runs inside `.cyberfabric/<name>`]** Executes `cargo run` in the generated directory
 - **[watch mode]** Restarts on config changes, workspace `Cargo.toml` changes, and changes in path-based dependencies
 - **[dependency watch management]** Reconciles watched dependency paths when config dependencies change
+- **[manual generated-project execution]** If you invoke the generated project or compiled binary yourself instead of
+  using `cyberfabric run`, you must set `CF_CLI_CONFIG` manually
 
 Examples:
 
@@ -628,6 +633,10 @@ Behavior:
 - **[path activation]** If `-p/--path` is provided, Clap changes the current working directory while parsing that value,
   before `-c/--config` is resolved and `.cyberfabric/<name>/` is generated
 - **[builds inside `.cyberfabric/<name>`]** Executes `cargo build` in the generated directory
+- **[runtime config source]** The generated server no longer embeds the config path; the resulting binary reads it from
+  `CF_CLI_CONFIG` when you execute it
+- **[manual generated-project execution]** If you later run the generated project or binary outside the CLI, you must
+  set `CF_CLI_CONFIG` yourself
 
 Examples:
 
@@ -692,7 +701,7 @@ Current status:
 ### Create a workspace and run it
 
 ```bash
-cyberfabric mod init /tmp/cf-demo
+cyberfabric init /tmp/cf-demo
 cyberfabric mod add background-worker -p /tmp/cf-demo
 cyberfabric config mod add background-worker -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
 cargo cyberfabric run -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
@@ -717,6 +726,8 @@ cyberfabric docs --verbose tokio::sync
 ## Important Caveats
 
 - **[`-c/--config` is mandatory]** For `config ...`, `build`, and `run`
+- **[generated servers expect `CF_CLI_CONFIG`]** `cyberfabric run` sets it for you, but manual execution of
+  `.cyberfabric/<name>/` or its compiled binary must provide it explicitly
 - **[`lint` and `test` are not ready]** They are part of the CLI surface but currently panic at runtime
 - **[`tools` can mutate your system]** It may install `rustup` or rustup components
 - **[`docs --registry`]** Only `crates.io` is supported
@@ -727,7 +738,7 @@ cyberfabric docs --verbose tokio::sync
 ## Quick Reference
 
 ```bash
-cyberfabric mod init <path>
+cyberfabric init <path>
 cyberfabric mod add <background-worker|api-db-handler|rest-gateway> [-p <workspace>]
 
 cyberfabric config mod list [-p <workspace>] -c <config>

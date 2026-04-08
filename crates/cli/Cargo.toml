@@ -24,8 +24,6 @@ anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 cargo-generate = { workspace = true }
 
-liquid = { workspace = true }
-
 module-parser = { workspace = true }
 notify = { workspace = true }
 

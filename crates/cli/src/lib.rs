@@ -2,6 +2,7 @@ mod build;
 mod common;
 mod config;
 mod docs;
+mod init;
 mod lint;
 mod r#mod;
 mod run;
@@ -19,6 +20,7 @@ pub struct Cli {
 
 #[derive(clap::Subcommand)]
 pub enum Commands {
+    Init(init::InitArgs),
     Mod(r#mod::ModArgs),
     Config(Box<config::ConfigArgs>),
     Docs(docs::DocsArgs),
@@ -32,6 +34,7 @@ pub enum Commands {
 impl Cli {
     pub fn run(self) -> anyhow::Result<()> {
         match self.command {
+            Commands::Init(init) => init.run(),
             Commands::Mod(r#mod) => r#mod.run(),
             Commands::Config(config) => config.run(),
             Commands::Docs(docs) => docs.run(),
