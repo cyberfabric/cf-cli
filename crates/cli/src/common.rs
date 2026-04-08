@@ -326,7 +326,8 @@ fn prepare_cargo_server_main(dependencies: &CargoTomlDependencies) -> String {
     use std::fmt::Write;
 
     let dependencies = dependencies.keys().fold(String::new(), |mut acc, name| {
-        _ = writeln!(acc, "use {name} as _;");
+        let rust_name = name.replace('-', "_");
+        _ = writeln!(acc, "use {rust_name} as _;");
         acc
     });
 
@@ -391,6 +392,7 @@ mod tests {
         let dependencies = CargoTomlDependencies::from([
             ("module_a".to_owned(), Default::default()),
             ("module_b".to_owned(), Default::default()),
+            ("api-db-handler".to_owned(), Default::default()),
         ]);
 
         let main_rs = prepare_cargo_server_main(&dependencies);
@@ -398,6 +400,8 @@ mod tests {
         assert!(main_rs.contains("std::env::var_os(\"CF_CLI_CONFIG\")"));
         assert!(main_rs.contains("use module_a as _;"));
         assert!(main_rs.contains("use module_b as _;"));
+        assert!(main_rs.contains("use api_db_handler as _;"));
+        assert!(!main_rs.contains("use api-db-handler as _;"));
         assert!(!main_rs.contains("{{dependencies}}"));
     }
 }
