@@ -13,12 +13,13 @@ impl BuildArgs {
         let (config_path, project_name) = self.build_run_args.resolve_config_and_name()?;
 
         let dependencies = common::get_config(&config_path)?.create_dependencies()?;
-        common::generate_server_structure(&project_name, &config_path, &dependencies)?;
+        common::generate_server_structure(&project_name, &dependencies)?;
 
         let cargo_dir = common::generated_project_dir(&project_name)?;
         let status = common::cargo_command(
             "build",
             &cargo_dir,
+            &config_path,
             self.build_run_args.otel,
             self.build_run_args.release,
         )

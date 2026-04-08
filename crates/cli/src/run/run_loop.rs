@@ -32,12 +32,12 @@ impl RunLoop {
     pub(super) fn run(&self, watch: bool) -> anyhow::Result<RunSignal> {
         let workspace_path = common::workspace_root()?;
         let dependencies = common::get_config(&self.config_path)?.create_dependencies()?;
-        common::generate_server_structure(&self.project_name, &self.config_path, &dependencies)?;
+        common::generate_server_structure(&self.project_name, &dependencies)?;
 
         let cargo_dir = common::generated_project_dir(&self.project_name)?;
 
         if !watch {
-            let status = cargo_run(&cargo_dir)
+            let status = cargo_run(&cargo_dir, &self.config_path)
                 .status()
                 .context("failed to run cargo")?;
             if !status.success() {
@@ -52,8 +52,9 @@ impl RunLoop {
 
         // Spawn cargo-run loop in a dedicated thread
         let cargo_dir_clone = cargo_dir;
+        let config_path = self.config_path.clone();
         let runner_handle = std::thread::spawn(move || {
-            cargo_run_loop(&cargo_dir_clone, &signal_rx);
+            cargo_run_loop(&cargo_dir_clone, &config_path, &signal_rx);
         });
 
         // File-system watcher
@@ -114,11 +115,9 @@ impl RunLoop {
                 {
                     Ok(new_deps) => {
                         if new_deps != current_deps {
-                            if let Err(e) = common::generate_server_structure(
-                                &self.project_name,
-                                &self.config_path,
-                                &new_deps,
-                            ) {
+                            if let Err(e) =
+                                common::generate_server_structure(&self.project_name, &new_deps)
+                            {
                                 eprintln!("failed to regenerate server structure: {e}");
                             } else {
                                 // Reconcile watched dependency paths
@@ -168,15 +167,15 @@ impl RunLoop {
     }
 }
 
-fn cargo_run(path: &Path) -> Command {
+fn cargo_run(path: &Path, config_path: &Path) -> Command {
     let otel = OTEL.load(std::sync::atomic::Ordering::Relaxed);
     let release = RELEASE.load(std::sync::atomic::Ordering::Relaxed);
-    common::cargo_command("run", path, otel, release)
+    common::cargo_command("run", path, config_path, otel, release)
 }
 
-fn cargo_run_loop(cargo_dir: &Path, signal_rx: &mpsc::Receiver<RunSignal>) {
+fn cargo_run_loop(cargo_dir: &Path, config_path: &Path, signal_rx: &mpsc::Receiver<RunSignal>) {
     'outer: loop {
-        let mut child = match cargo_run(cargo_dir).spawn() {
+        let mut child = match cargo_run(cargo_dir, config_path).spawn() {
             Ok(child) => child,
             Err(e) => {
                 eprintln!("failed to spawn cargo run: {e}");

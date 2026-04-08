@@ -402,7 +402,6 @@ dependencies = [
  "cargo-generate",
  "clap",
  "flate2",
- "liquid",
  "module-parser",
  "notify",
  "reqwest",

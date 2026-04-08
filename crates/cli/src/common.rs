@@ -101,56 +101,39 @@ impl BuildRunArgs {
 
 pub const BASE_PATH: &str = ".cyberfabric";
 
+const CONFIG_PATH_ENV_VAR: &str = "CF_CLI_CONFIG";
+
 const CARGO_CONFIG_TOML: &str = r#"[build]
 target-dir = "../../target"
 build-dir = "../../target"
 "#;
 
 const CARGO_SERVER_MAIN: &str = r#"
-use anyhow::Result;
-use modkit::bootstrap::{
-    AppConfig, host::{init_logging_unified, init_panic_tracing}, /* run_migrate, */ run_server,
-};
+use anyhow::{Context, Result};
+use modkit::bootstrap::{AppConfig, /* run_migrate, */ run_server};
 {{dependencies}}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config = AppConfig::load_or_default(&Some(std::path::PathBuf::from("{{config_path}}")))?;
-
-    // Build OpenTelemetry layer before logging
-    // Convert TracingConfig from modkit::bootstrap to modkit's type (they have identical structure)
-    #[cfg(feature = "otel")]
-    let otel_layer = if config.tracing.enabled {
-        Some(modkit::telemetry::init::init_tracing(&config.tracing)?)
-    } else {
-        None
-    };
-    #[cfg(not(feature = "otel"))]
-    let otel_layer = None;
-
-    // Initialize logging + otel in one Registry
-    init_logging_unified(&config.logging, &config.server.home_dir, otel_layer);
-
-    // Register custom panic hook to reroute panic backtrace into tracing.
-    init_panic_tracing();
-
-    // One-time connectivity probe
-    #[cfg(feature = "otel")]
-    if config.tracing.enabled
-        && let Err(e) = modkit::telemetry::init::otel_connectivity_probe(&config.tracing)
-    {
-        tracing::error!(error = %e, "OTLP connectivity probe failed");
-    }
-
-    tracing::info!("CyberFabric Server starting");
+    let config_path = std::env::var_os("CF_CLI_CONFIG")
+        .map(std::path::PathBuf::from)
+        .context("CF_CLI_CONFIG is not set")?;
+    let config = AppConfig::load_or_default(Some(&config_path))?;
 
     run_server(config).await
 }"#;
 
-pub fn cargo_command(subcommand: &str, path: &Path, otel: bool, release: bool) -> Command {
+pub fn cargo_command(
+    subcommand: &str,
+    path: &Path,
+    config_path: &Path,
+    otel: bool,
+    release: bool,
+) -> Command {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut cmd = Command::new(cargo);
     cmd.arg(subcommand);
+    cmd.env(CONFIG_PATH_ENV_VAR, config_path.as_os_str());
     if otel {
         cmd.arg("-F").arg("otel");
     }
@@ -257,7 +240,6 @@ fn create_required_deps() -> anyhow::Result<CargoTomlDependencies> {
 
 pub fn generate_server_structure(
     project_name: &str,
-    config_path: &Path,
     current_dependencies: &CargoTomlDependencies,
 ) -> anyhow::Result<()> {
     let mut dependencies = current_dependencies.clone();
@@ -273,20 +255,11 @@ pub fn generate_server_structure(
     };
     let cargo_toml_str =
         toml::to_string(&cargo_toml).context("something went wrong when transforming to toml")?;
-    let main_template = liquid::ParserBuilder::with_stdlib()
-        .build()?
-        .parse(CARGO_SERVER_MAIN)?;
+    let main_rs = prepare_cargo_server_main(current_dependencies);
 
     create_file_structure(project_name, "Cargo.toml", &cargo_toml_str)?;
     create_file_structure(project_name, ".cargo/config.toml", CARGO_CONFIG_TOML)?;
-    create_file_structure(
-        project_name,
-        "src/main.rs",
-        &main_template.render(&prepare_cargo_server_main(
-            config_path,
-            current_dependencies,
-        ))?,
-    )?;
+    create_file_structure(project_name, "src/main.rs", &main_rs)?;
 
     Ok(())
 }
@@ -349,28 +322,21 @@ fn resolve_generated_project_name(
     Ok(file_stem.to_owned())
 }
 
-/// UNC paths are not supported like `\\server\share`, as we replace backslashes with forward slashes.
-fn prepare_cargo_server_main(
-    config_path: &Path,
-    dependencies: &CargoTomlDependencies,
-) -> liquid::Object {
+fn prepare_cargo_server_main(dependencies: &CargoTomlDependencies) -> String {
     use std::fmt::Write;
+
     let dependencies = dependencies.keys().fold(String::new(), |mut acc, name| {
         _ = writeln!(acc, "use {name} as _;");
         acc
     });
-    let config_path = config_path.display().to_string().replace('\\', "/");
 
-    liquid::object!({
-        "dependencies": dependencies,
-        "config_path": config_path,
-    })
+    CARGO_SERVER_MAIN.replace("{{dependencies}}", &dependencies)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_module_metadata, resolve_generated_project_name};
-    use module_parser::{Capability, ConfigModuleMetadata};
+    use super::{merge_module_metadata, prepare_cargo_server_main, resolve_generated_project_name};
+    use module_parser::{Capability, CargoTomlDependencies, ConfigModuleMetadata};
     use std::path::Path;
 
     #[test]
@@ -418,5 +384,20 @@ mod tests {
             .expect("explicit override should resolve to a project name");
 
         assert_eq!(name, "demo");
+    }
+
+    #[test]
+    fn generated_server_main_reads_config_from_env_and_includes_dependencies() {
+        let dependencies = CargoTomlDependencies::from([
+            ("module_a".to_owned(), Default::default()),
+            ("module_b".to_owned(), Default::default()),
+        ]);
+
+        let main_rs = prepare_cargo_server_main(&dependencies);
+
+        assert!(main_rs.contains("std::env::var_os(\"CF_CLI_CONFIG\")"));
+        assert!(main_rs.contains("use module_a as _;"));
+        assert!(main_rs.contains("use module_b as _;"));
+        assert!(!main_rs.contains("{{dependencies}}"));
     }
 }
