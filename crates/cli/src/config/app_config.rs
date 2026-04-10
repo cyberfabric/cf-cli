@@ -2,7 +2,7 @@ use clap::{Args, ValueEnum};
 use module_parser::ConfigModuleMetadata;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -18,15 +18,19 @@ pub struct AppConfig {
     /// Logging configuration.
     #[serde(default = "default_logging_config")]
     pub logging: LoggingConfig,
-    /// Tracing configuration.
+    /// OpenTelemetry configuration (resource, tracing, metrics).
     #[serde(default)]
-    pub tracing: TracingConfig,
+    pub opentelemetry: OpenTelemetryConfig,
     /// Directory containing per-module YAML files (optional).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modules_dir: Option<String>,
     /// Per-module configuration bag: `module_name` -> module config.
     #[serde(default)]
     pub modules: BTreeMap<String, ModuleConfig>,
+    /// Per-vendor configuration bag: `vendor_name` → arbitrary JSON/YAML value.
+    /// Allows vendors to add their own typed configuration sections.
+    #[serde(default)]
+    pub vendor: VendorConfig,
 }
 
 impl Default for AppConfig {
@@ -35,9 +39,10 @@ impl Default for AppConfig {
             server: ServerConfig::default(),
             database: None,
             logging: default_logging_config(),
-            tracing: TracingConfig::default(),
+            opentelemetry: OpenTelemetryConfig::default(),
             modules_dir: None,
             modules: BTreeMap::new(),
+            vendor: VendorConfig::default(),
         }
     }
 }
@@ -361,27 +366,68 @@ fn parse_duration_secs(raw: &str) -> Result<Duration, String> {
         .map_err(|_| format!("invalid duration seconds '{raw}'"))
 }
 
+/// Per-vendor configuration bag: vendor name → arbitrary JSON/YAML value.
+/// Each vendor's section can be deserialized into a typed struct via
+/// [`AppConfig::vendor_config`] or [`AppConfig::vendor_config_or_default`].
+pub type VendorConfig = HashMap<String, serde_json::Value>;
+
+/// Top-level OpenTelemetry configuration grouping resource identity,
+/// a shared default exporter, tracing settings and metrics settings.
+#[derive(Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct OpenTelemetryConfig {
+    #[serde(default)]
+    pub resource: OpenTelemetryResource,
+    /// Default exporter shared by tracing and metrics. Per-signal `exporter`
+    /// fields override this when present.
+    pub exporter: Option<Exporter>,
+    #[serde(default)]
+    pub tracing: TracingConfig,
+    #[serde(default)]
+    pub metrics: MetricsConfig,
+}
+
+/// OpenTelemetry resource identity — attached to all traces and metrics.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenTelemetryResource {
+    /// Logical service name.
+    #[serde(default = "default_service_name")]
+    pub service_name: String,
+    /// Extra resource attributes added to every span and metric data point.
+    #[serde(default)]
+    pub attributes: BTreeMap<String, String>,
+}
+
+/// Return the default OpenTelemetry service name used when none is configured.
+fn default_service_name() -> String {
+    "cyberfabric".to_owned()
+}
+
+impl Default for OpenTelemetryResource {
+    fn default() -> Self {
+        Self {
+            service_name: default_service_name(),
+            attributes: BTreeMap::default(),
+        }
+    }
+}
+
 /// Tracing configuration for OpenTelemetry distributed tracing.
 #[derive(Clone, Deserialize, Serialize, Default)]
 pub struct TracingConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub service_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exporter: Option<Exporter>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sampler: Option<Sampler>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub propagation: Option<Propagation>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub resource: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http: Option<HttpOpts>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logs_correlation: Option<LogsCorrelation>,
-    #[serde(default)]
-    pub metrics: MetricsConfig,
 }
 
 /// Metrics configuration for OpenTelemetry metrics collection.

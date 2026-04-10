@@ -23,7 +23,7 @@ pub struct PathConfigArgs {
     pub config: PathBuf,
 }
 
-fn parse_and_chdir(s: &str) -> Result<PathBuf, String> {
+pub fn parse_and_chdir(s: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(s);
 
     if !path.is_dir() {
