@@ -43,7 +43,6 @@ toml_edit = { workspace = true }
 semver = { workspace = true }
 tempfile = { workspace = true }
 dylint = { workspace = true, optional = true }
-liquid = "0.26.11"
 
 [lints]
 workspace = true

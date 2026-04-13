@@ -1,14 +1,12 @@
 use crate::common::{self, PathConfigArgs};
 use anyhow::{Context, bail};
+use cargo_generate::{GenerateArgs, TemplatePath, Vcs, generate};
 use clap::{Args, ValueEnum};
-use liquid::ParserBuilder;
 use module_parser::CargoTomlDependencies;
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const OUTPUT_SUBDIR: &str = "deploy";
 /// Exact directory/file names excluded from deploy bundle copies.
@@ -16,7 +14,6 @@ const OUTPUT_SUBDIR: &str = "deploy";
 /// handled by [`should_skip_bundle_entry`].
 const FILTERED_ENTRY_NAMES: &[&str] =
     &[".DS_Store", ".git", ".github", ".idea", ".vscode", "target"];
-const TEMPLATE_FILE_PAIRS: [(&str, &str); 1] = [("Dockerfile.liquid", "Dockerfile")];
 
 #[derive(Args)]
 pub struct DeployArgs {
@@ -34,12 +31,6 @@ pub struct DeployArgs {
     /// Allow replacing an existing custom output directory
     #[arg(long)]
     force: bool,
-    /// Optional local image name used in helper output
-    #[arg(long)]
-    image_name: Option<String>,
-    /// Optional local image tag used in helper output
-    #[arg(long, default_value = "latest")]
-    image_tag: String,
     /// Path to a local deploy template repository
     #[arg(long)]
     local_path: Option<String>,
@@ -99,33 +90,22 @@ impl DeployArgs {
             rewrite_dependency_paths_for_bundle(&workspace_root, &dependencies)?;
         common::generate_server_structure_at(&output_dir, &project_name, &rewritten_dependencies)?;
 
-        let template_checkout = TemplateCheckout::prepare(
-            self.local_path.as_deref(),
-            self.git.as_deref(),
-            self.branch.as_deref(),
-        )?;
-        let template_dir = template_checkout.template_dir(&self.subfolder, self.template)?;
-        render_templates(
-            &template_dir,
+        render_deploy_template(
             &output_dir,
-            &build_template_context(
-                &project_name,
-                &local_paths,
-                has_cargo_lock,
-                &self.image_ref(&project_name),
-            ),
+            &project_name,
+            &local_paths,
+            has_cargo_lock,
+            &TemplateSource {
+                local_path: self.local_path.as_deref(),
+                git: self.git.as_deref(),
+                subfolder: &self.subfolder,
+                kind: self.template,
+                branch: self.branch.as_deref(),
+            },
         )?;
 
         println!("Deploy bundle generated at {}", output_dir.display());
         Ok(())
-    }
-
-    fn image_ref(&self, project_name: &str) -> String {
-        let image_name = self
-            .image_name
-            .clone()
-            .unwrap_or_else(|| project_name.to_owned());
-        format!("{}:{}", image_name, self.image_tag)
     }
 
     fn resolve_output_dir(&self, workspace_root: &Path, project_name: &str) -> PathBuf {
@@ -144,69 +124,6 @@ impl DeployArgs {
                 }
             },
         )
-    }
-}
-
-struct TemplateCheckout {
-    root: PathBuf,
-    cleanup_root: Option<PathBuf>,
-}
-
-impl TemplateCheckout {
-    fn prepare(
-        local_path: Option<&str>,
-        git: Option<&str>,
-        branch: Option<&str>,
-    ) -> anyhow::Result<Self> {
-        if let Some(local_path) = local_path {
-            let root = PathBuf::from(local_path)
-                .canonicalize()
-                .with_context(|| format!("can't canonicalize template path {local_path}"))?;
-            return Ok(Self {
-                root,
-                cleanup_root: None,
-            });
-        }
-
-        let git = git.context("template git URL is missing")?;
-        let branch = branch.unwrap_or("main");
-        let checkout_dir = unique_checkout_dir();
-        let output = Command::new("git")
-            .args(["clone", "--depth", "1", "--branch", branch, git])
-            .arg(&checkout_dir)
-            .output()
-            .context("failed to invoke git clone for deploy templates")?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            let details = if stderr.is_empty() { stdout } else { stderr };
-            bail!("failed to clone deploy template repo: {details}");
-        }
-
-        Ok(Self {
-            root: checkout_dir.clone(),
-            cleanup_root: Some(checkout_dir),
-        })
-    }
-
-    fn template_dir(
-        &self,
-        subfolder: &str,
-        template: DeployTemplateKind,
-    ) -> anyhow::Result<PathBuf> {
-        let dir = self.root.join(subfolder).join(template.as_str());
-        if !dir.is_dir() {
-            bail!("deploy template directory not found at {}", dir.display());
-        }
-        Ok(dir)
-    }
-}
-
-impl Drop for TemplateCheckout {
-    fn drop(&mut self) {
-        if let Some(path) = &self.cleanup_root {
-            let _ = fs::remove_dir_all(path);
-        }
     }
 }
 
@@ -257,14 +174,6 @@ fn prepare_output_dir(output_dir: &Path, workspace_root: &Path, force: bool) -> 
     }
     fs::create_dir_all(&output_dir)
         .with_context(|| format!("can't create {}", output_dir.display()))
-}
-
-fn unique_checkout_dir() -> PathBuf {
-    let suffix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    std::env::temp_dir().join(format!("cf-cli-deploy-{suffix}"))
 }
 
 fn copy_optional_file(source: &Path, destination: &Path) -> anyhow::Result<bool> {
@@ -443,57 +352,84 @@ fn bundle_relative_dependency_path(relative_path: &Path) -> String {
         .replace('\\', "/")
 }
 
-fn build_template_context(
+struct TemplateSource<'a> {
+    local_path: Option<&'a str>,
+    git: Option<&'a str>,
+    subfolder: &'a str,
+    kind: DeployTemplateKind,
+    branch: Option<&'a str>,
+}
+
+fn render_deploy_template(
+    output_dir: &Path,
     project_name: &str,
     local_paths: &BTreeSet<PathBuf>,
     has_cargo_lock: bool,
-    image_ref: &str,
-) -> liquid::Object {
-    let local_paths = local_paths
-        .iter()
-        .map(|path| path.display().to_string().replace('\\', "/"))
-        .collect::<Vec<_>>();
-
-    liquid::object!({
-        "project_name": project_name,
-        "executable_name": project_name,
-        "generated_project_dir": format!(".cyberfabric/{project_name}"),
-        "has_cargo_lock": has_cargo_lock,
-        "local_paths": local_paths,
-        "image_ref": image_ref,
-        // Intentionally hardcoded: the Dockerfile template uses these paths to
-        // conditionally gate OpenTelemetry setup in the generated server main.
-        // The actual runtime value comes from the config.yml copied into the
-        // bundle, not from this template context.
-        "config": {
-            "opentelemetry": {
-                "tracing": {
-                    "enabled": true,
-                },
-            },
-        },
-    })
-}
-
-fn render_templates(
-    template_dir: &Path,
-    output_dir: &Path,
-    context: &liquid::Object,
+    source: &TemplateSource<'_>,
 ) -> anyhow::Result<()> {
-    let parser = ParserBuilder::with_stdlib().build()?;
-    for (template_name, output_name) in TEMPLATE_FILE_PAIRS {
-        let template_path = template_dir.join(template_name);
-        let template_source = fs::read_to_string(&template_path)
-            .with_context(|| format!("can't read {}", template_path.display()))?;
-        let template = parser
-            .parse(&template_source)
-            .with_context(|| format!("can't parse {}", template_path.display()))?;
-        let rendered = template
-            .render(context)
-            .with_context(|| format!("can't render {}", template_path.display()))?;
-        fs::write(output_dir.join(output_name), rendered)
-            .with_context(|| format!("can't write {}", output_dir.join(output_name).display()))?;
-    }
+    let generated_project_dir = format!(".cyberfabric/{project_name}");
+
+    let copy_cargo_lock = if has_cargo_lock {
+        "COPY Cargo.lock Cargo.lock\n".to_owned()
+    } else {
+        String::new()
+    };
+
+    let copy_local_paths = local_paths
+        .iter()
+        .map(|p| {
+            let p = p.display().to_string().replace('\\', "/");
+            format!("COPY {p} {p}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let values_path = output_dir.join(".cargo-generate-values.toml");
+    fs::write(
+        &values_path,
+        format!(
+            "[values]\ngenerated_project_dir = {gen}\nexecutable_name = {exe}\ncopy_cargo_lock = {lock}\ncopy_local_paths = {paths}\n",
+            gen = toml::Value::from(&*generated_project_dir),
+            exe = toml::Value::from(project_name),
+            lock = toml::Value::from(&*copy_cargo_lock),
+            paths = toml::Value::from(&*copy_local_paths),
+        ),
+    )
+    .context("can't write template values file")?;
+
+    let auto_path = format!("{}/{}", source.subfolder, source.kind.as_str());
+
+    let (git, branch) = if source.local_path.is_some() {
+        (None, None)
+    } else {
+        (
+            source.git.map(ToOwned::to_owned),
+            source.branch.map(ToOwned::to_owned),
+        )
+    };
+
+    generate(GenerateArgs {
+        template_path: TemplatePath {
+            auto_path: Some(auto_path),
+            git,
+            path: source.local_path.map(ToOwned::to_owned),
+            branch,
+            ..TemplatePath::default()
+        },
+        destination: Some(output_dir.to_path_buf()),
+        name: Some(project_name.to_owned()),
+        force: true,
+        silent: true,
+        vcs: Some(Vcs::None),
+        init: true,
+        overwrite: true,
+        no_workspace: true,
+        template_values_file: Some(values_path.display().to_string()),
+        ..GenerateArgs::default()
+    })
+    .context("can't render deploy template")?;
+
+    let _ = fs::remove_file(&values_path);
     Ok(())
 }
 
@@ -711,8 +647,12 @@ path = "src/lib.rs"
             "#[module(name = \"demo\")]\npub struct DemoModule;\n",
         );
         temp_dir.write(
+            "templates/Deploy/docker/cargo-generate.toml",
+            "[template]\nexclude = [\"**/.DS_Store\"]\n",
+        );
+        temp_dir.write(
             "templates/Deploy/docker/Dockerfile.liquid",
-            "COPY {{ generated_project_dir }}/Cargo.toml {{ generated_project_dir }}/Cargo.toml\n{% for path in local_paths %}COPY {{ path }} {{ path }}\n{% endfor %}COPY config.yml /srv/config.yml\nCOPY --from=builder /workspace/target/release/{{ executable_name }} /srv/{{ executable_name }}\n",
+            "COPY {{ generated_project_dir }}/Cargo.toml {{ generated_project_dir }}/Cargo.toml\n{{ copy_local_paths }}\nCOPY config.yml /srv/config.yml\nCOPY --from=builder /workspace/target/release/{{ executable_name }} /srv/{{ executable_name }}\n",
         );
 
         // chdir so workspace_root() resolves to the temp directory;
@@ -731,8 +671,6 @@ path = "src/lib.rs"
             name: Some("demo".to_owned()),
             output_dir: Some(output_dir.clone()),
             force: false,
-            image_name: None,
-            image_tag: "latest".to_owned(),
             local_path: Some(workspace_root.join("templates").display().to_string()),
             git: None,
             subfolder: "Deploy".to_owned(),
