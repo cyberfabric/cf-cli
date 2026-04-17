@@ -337,7 +337,9 @@ fn prepare_cargo_server_main(dependencies: &CargoTomlDependencies) -> String {
 #[cfg(test)]
 mod tests {
     use super::{merge_module_metadata, prepare_cargo_server_main, resolve_generated_project_name};
-    use module_parser::{Capability, CargoTomlDependencies, ConfigModuleMetadata};
+    use module_parser::{
+        Capability, CargoTomlDependencies, CargoTomlDependency, ConfigModuleMetadata,
+    };
     use std::path::Path;
 
     #[test]
@@ -390,9 +392,9 @@ mod tests {
     #[test]
     fn generated_server_main_reads_config_from_env_and_includes_dependencies() {
         let dependencies = CargoTomlDependencies::from([
-            ("module_a".to_owned(), Default::default()),
-            ("module_b".to_owned(), Default::default()),
-            ("api-db-handler".to_owned(), Default::default()),
+            ("module_a".to_owned(), CargoTomlDependency::default()),
+            ("module_b".to_owned(), CargoTomlDependency::default()),
+            ("api-db-handler".to_owned(), CargoTomlDependency::default()),
         ]);
 
         let main_rs = prepare_cargo_server_main(&dependencies);

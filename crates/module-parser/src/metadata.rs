@@ -397,14 +397,14 @@ mod tests {
         );
         temp_dir.write(
             "src/lib.rs",
-            r#"
+            r"
             use proc_macro::TokenStream;
 
             #[proc_macro_attribute]
             pub fn module(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 item
             }
-            "#,
+            ",
         );
 
         let resolved = resolve_source_from_metadata(temp_dir.path(), "cf-demo-macros::module")
@@ -549,9 +549,9 @@ mod tests {
         );
         temp_dir.write(
             "src/lib.rs",
-            r#"
+            r"
             pub fn app() {}
-            "#,
+            ",
         );
         temp_dir.write(
             "cf-helper/Cargo.toml",
@@ -570,9 +570,9 @@ mod tests {
         );
         temp_dir.write(
             "cf-helper/src/lib.rs",
-            r#"
+            r"
             pub fn helper() {}
-            "#,
+            ",
         );
 
         let dependency_aliases =

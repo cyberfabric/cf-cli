@@ -174,6 +174,7 @@ fn build_dylint_rules() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg_attr(not(feature = "dylint-rules"), allow(clippy::unnecessary_wraps))]
 fn main() -> anyhow::Result<()> {
     #[cfg(feature = "dylint-rules")]
     build_dylint_rules()?;

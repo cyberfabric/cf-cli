@@ -61,15 +61,15 @@ fn embedded_toolchains() -> Result<BTreeSet<String>> {
 
 #[cfg(feature = "dylint-rules")]
 fn run_dylint() -> Result<()> {
+    for toolchain in embedded_toolchains()? {
+        ensure_toolchain_installed(&toolchain)?;
+    }
+
     // Write every embedded dylib to a per-run temp directory so dylint can
     // dlopen them. The temp dir (and its contents) is removed when `tmp_dir`
     // drops at the end of this function, which is safe because `dylint::run`
     // is synchronous and has already finished using the files by then.
     let tmp_dir = tempfile::tempdir().context("could not create temp dir for dylibs")?;
-
-    for toolchain in embedded_toolchains()? {
-        ensure_toolchain_installed(&toolchain)?;
-    }
 
     let lib_paths: Vec<String> = LIBS
         .iter()

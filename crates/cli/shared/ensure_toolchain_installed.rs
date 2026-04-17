@@ -17,7 +17,8 @@ pub fn ensure_toolchain_installed(toolchain: &str) -> anyhow::Result<()> {
         );
     }
 
-    let installed = String::from_utf8(installed.stdout)?;
+    let installed = String::from_utf8(installed.stdout)
+        .context("rustup toolchain list returned non-UTF-8 output")?;
     let installed_prefix = format!("{toolchain}-");
     if installed
         .lines()

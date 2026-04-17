@@ -506,13 +506,13 @@ mod tests {
         let temp_dir = TempDir::new().expect("failed to create temp dir");
         temp_dir.write(
             "src/lib.rs",
-            r#"
+            r"
             pub mod utils;
-            "#,
+            ",
         );
         temp_dir.write(
             "src/utils.rs",
-            r#"
+            r"
             pub fn always() -> bool { true }
 
             #[cfg(not(test))]
@@ -520,7 +520,7 @@ mod tests {
 
             #[cfg(test)]
             fn test_only() -> bool { false }
-            "#,
+            ",
         );
 
         let resolved = resolve_rust_path(&temp_dir.path().join("src/lib.rs"), &["utils"])
@@ -543,18 +543,18 @@ pub fn prod_only() -> bool {
         let temp_dir = TempDir::new().expect("failed to create temp dir");
         temp_dir.write(
             "src/lib.rs",
-            r#"
+            r"
             pub mod handler;
-            "#,
+            ",
         );
         temp_dir.write(
             "src/handler.rs",
-            r#"
+            r"
             pub async fn handle() {}
 
             #[tokio::test]
             async fn test_handle() {}
-            "#,
+            ",
         );
 
         let resolved = resolve_rust_path(&temp_dir.path().join("src/lib.rs"), &["handler"])
@@ -568,9 +568,9 @@ pub fn prod_only() -> bool {
         let temp_dir = TempDir::new().expect("failed to create temp dir");
         temp_dir.write(
             "src/lib.rs",
-            r#"
+            r"
             pub mod mixed;
-            "#,
+            ",
         );
         temp_dir.write(
             "src/mixed.rs",
