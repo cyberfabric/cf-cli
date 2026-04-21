@@ -1,4 +1,4 @@
-use crate::common;
+use crate::{app_config, common};
 use anyhow::{Context, bail};
 use notify::{RecursiveMode, Watcher};
 use std::collections::HashSet;
@@ -111,7 +111,7 @@ impl RunLoop {
 
             if is_config_change || is_workspace_manifest_change {
                 match common::get_config(&self.config_path)
-                    .and_then(module_parser::Config::create_dependencies)
+                    .and_then(app_config::AppConfig::create_dependencies)
                 {
                     Ok(new_deps) => {
                         if new_deps != current_deps {

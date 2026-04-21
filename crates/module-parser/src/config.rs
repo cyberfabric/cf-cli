@@ -1,39 +1,10 @@
-use anyhow::bail;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
 #[derive(Deserialize)]
 pub struct Config {
     pub modules: HashMap<String, ConfigModule>,
-}
-
-impl Config {
-    pub fn create_dependencies(self) -> anyhow::Result<CargoTomlDependencies> {
-        let mut dependencies = HashMap::with_capacity(self.modules.len());
-        for (name, module) in self.modules {
-            let Some(package) = module.metadata.package.clone() else {
-                bail!("module '{name}' doesn't have package associated, please review");
-            };
-            let package = package.replace('-', "_");
-            if dependencies.contains_key(&package) {
-                bail!("module '{name}' has duplicate package name '{package}'");
-            }
-
-            dependencies.insert(
-                package,
-                CargoTomlDependency {
-                    package: module.metadata.package,
-                    version: module.metadata.version,
-                    features: module.metadata.features.into_iter().collect(),
-                    default_features: module.metadata.default_features,
-                    path: module.metadata.path,
-                },
-            );
-        }
-
-        Ok(dependencies)
-    }
 }
 
 #[derive(Deserialize)]
@@ -100,7 +71,7 @@ pub struct CargoToml {
     pub workspace: HashMap<String, Vec<String>>,
 }
 
-pub type CargoTomlDependencies = HashMap<String, CargoTomlDependency>;
+pub type CargoTomlDependencies = BTreeMap<String, CargoTomlDependency>;
 
 #[derive(Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CargoTomlDependency {

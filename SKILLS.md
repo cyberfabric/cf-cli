@@ -664,25 +664,39 @@ Run workspace linting helpers from the selected workspace directory.
 Synopsis:
 
 ```bash
-cyberfabric lint [-p <PATH>] [--clippy] [--dylint]
+cyberfabric lint [-p <PATH>] [--all] [--clippy] [--strict] [--dylint]
 ```
 
 Arguments:
 
 - **[`-p, --path <PATH>`]** Optional workspace directory; changes the current working directory while Clap parses it
-- **[`--clippy`]** Accepted by the CLI, but currently has no effect by itself
+- **[`--all`]** Runs all available lint suites; this is also the default when neither `--clippy` nor `--dylint` is passed
+- **[`--clippy`]** Runs workspace Clippy checks; if passed by itself, it disables the default implicit `--all`
+- **[`--strict`]** Turns Clippy warnings into errors; valid only when Clippy is selected explicitly or through `--all`
 - **[`--dylint`]** Runs embedded Dylint rules against the workspace rooted at the current or selected directory
 
 Behavior:
 
 - **[path activation]** If `-p/--path` is provided, it changes the current working directory
+- **[default lint selection]** With no explicit lint-selection flags, `lint` behaves as if `--all` was enabled
+- **[explicit selection disables default all]** Passing `--clippy` and/or `--dylint` opts into just those requested lint suites unless
+  `--all` is also provided
+- **[workspace Clippy]** Clippy runs as `cargo clippy --workspace --all-targets`
+- **[strict scope]** `--strict` is rejected unless Clippy is active through `--clippy` or `--all`
 - **[workspace-scoped dylint]** Dylint resolves the workspace from the current working directory, so `-p/--path` is the
   way to lint another workspace without manually changing directories
 - **[toolchain bootstrap]** Before running Dylint, the CLI ensures the toolchains required by the embedded lint dylibs
   are installed
-- **[clippy flag pending]** `--clippy` is parsed, but the current implementation does not invoke Clippy yet
 
 Examples:
+
+```bash
+cyberfabric lint
+```
+
+```bash
+cyberfabric lint --clippy --strict
+```
 
 ```bash
 cyberfabric lint --dylint
@@ -744,9 +758,9 @@ cyberfabric docs --verbose tokio::sync
 - **[`-c/--config` is mandatory]** For `config ...`, `build`, and `run`
 - **[generated servers expect `CF_CLI_CONFIG`]** `cyberfabric run` sets it for you, but manual execution of
   `.cyberfabric/<name>/` or its compiled binary must provide it explicitly
-- **[`lint --clippy` is not wired yet]** The flag is accepted, but the current implementation does not invoke Clippy
 - **[`lint --dylint` needs the feature build]** Without the `dylint-rules` feature enabled, it currently reaches
-  `unimplemented!`
+  an error
+- **[`lint --strict` depends on Clippy]** Use it together with `--clippy` or `--all`
 - **[`test` is not ready]** It is part of the CLI surface but currently panics at runtime
 - **[`tools` can mutate your system]** It may install `rustup` or rustup components
 - **[`docs --registry`]** Only `crates.io` is supported
@@ -772,7 +786,7 @@ cyberfabric config db edit <name> [-p <workspace>] -c <config> ...
 cyberfabric config db rm <name> [-p <workspace>] -c <config>
 
 cyberfabric docs [-p <path>] [--version <version>] [--clean] [<query>]
-cyberfabric lint [-p <workspace>] [--clippy] [--dylint]
+cyberfabric lint [-p <workspace>] [--all] [--clippy] [--strict] [--dylint]
 cyberfabric tools --all
 cyberfabric run [-p <workspace>] -c <config> [--name <name>] [--watch]
 cyberfabric build [-p <workspace>] -c <config> [--name <name>]

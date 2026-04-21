@@ -1,14 +1,13 @@
 use crate::common::parse_and_chdir;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Args;
 
-#[cfg(feature = "dylint-rules")]
-use anyhow::Context;
 #[cfg(feature = "dylint-rules")]
 use std::collections::BTreeSet;
 #[cfg(feature = "dylint-rules")]
 use std::io::Write;
 use std::path::PathBuf;
+use std::process::Command;
 
 #[cfg(feature = "dylint-rules")]
 mod ensure_toolchain_installed_shared {
@@ -23,11 +22,19 @@ use ensure_toolchain_installed_shared::ensure_toolchain_installed;
 
 #[derive(Args)]
 pub struct LintArgs {
+    /// Run all available lint rules
+    #[arg(long)]
+    all: bool,
     /// Path to the module workspace root
     #[arg(short = 'p', long, value_parser = parse_and_chdir)]
     pub path: Option<PathBuf>,
+    /// Run recommended clippy rules. Follows Cargo.toml exceptions if present.
     #[arg(long)]
     clippy: bool,
+    /// Strict mode. Throws an error if any lint rule is triggered.
+    #[arg(long)]
+    strict: bool,
+    /// Run extra lint rules made for cyberfabric modules.
     #[arg(long)]
     dylint: bool,
 }
@@ -35,13 +42,69 @@ pub struct LintArgs {
 #[cfg(feature = "dylint-rules")]
 include!(concat!(env!("OUT_DIR"), "/generated_libs.rs"));
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct EffectiveLintSelection {
+    all: bool,
+    clippy: bool,
+    dylint: bool,
+}
+
 impl LintArgs {
+    const fn selection(&self) -> EffectiveLintSelection {
+        let all = self.all || (!self.clippy && !self.dylint);
+        EffectiveLintSelection {
+            all,
+            clippy: self.clippy || all,
+            dylint: self.dylint || all,
+        }
+    }
+
+    fn validate(&self) -> Result<EffectiveLintSelection> {
+        let selection = self.selection();
+        if self.strict && !selection.clippy {
+            anyhow::bail!("`--strict` requires `--clippy` or `--all`");
+        }
+        Ok(selection)
+    }
+
     pub fn run(&self) -> Result<()> {
+        let selection = self.validate()?;
+
+        if selection.clippy {
+            run_clippy(self.strict)?;
+        }
+
+        #[cfg(feature = "dylint-rules")]
+        if selection.dylint {
+            run_dylint()?;
+        }
+
+        #[cfg(not(feature = "dylint-rules"))]
         if self.dylint {
             run_dylint()?;
         }
+
         Ok(())
     }
+}
+
+fn run_clippy(strict: bool) -> Result<()> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let mut cmd = Command::new(cargo);
+    cmd.args(["clippy", "--workspace", "--all-targets"]);
+
+    // TODO Analyse the features that each crate has and try to test them against the feature set.
+
+    if strict {
+        cmd.arg("--").arg("-D").arg("warnings");
+    }
+
+    let status = cmd.status().context("failed to run `cargo clippy`")?;
+    if !status.success() {
+        anyhow::bail!("`cargo clippy` failed with exit status {status}");
+    }
+
+    Ok(())
 }
 
 #[cfg(feature = "dylint-rules")]
@@ -109,4 +172,52 @@ fn run_dylint() -> Result<()> {
 #[cfg(not(feature = "dylint-rules"))]
 fn run_dylint() -> Result<()> {
     anyhow::bail!("dylint-rules feature not enabled")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LintArgs;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        lint: LintArgs,
+    }
+
+    #[test]
+    fn defaults_to_all_lints() {
+        let cli = TestCli::try_parse_from(["cyberfabric"]).expect("lint args should parse");
+
+        let selection = cli.lint.selection();
+
+        assert!(selection.all);
+        assert!(selection.clippy);
+        assert!(selection.dylint);
+    }
+
+    #[test]
+    fn explicit_lint_selection_disables_default_all() {
+        let cli =
+            TestCli::try_parse_from(["cyberfabric", "--dylint"]).expect("lint args should parse");
+
+        let selection = cli.lint.selection();
+
+        assert!(!selection.all);
+        assert!(!selection.clippy);
+        assert!(selection.dylint);
+    }
+
+    #[test]
+    fn strict_requires_clippy_or_all() {
+        let cli = TestCli::try_parse_from(["cyberfabric", "--dylint", "--strict"])
+            .expect("lint args should parse");
+
+        let error = cli.lint.validate().expect_err("strict should be rejected");
+
+        assert_eq!(
+            error.to_string(),
+            "`--strict` requires `--clippy` or `--all`"
+        );
+    }
 }

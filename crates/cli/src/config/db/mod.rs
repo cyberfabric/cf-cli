@@ -1,5 +1,5 @@
-use super::app_config::DbConnConfig;
 use super::{ensure_conn_payload, load_config, save_config, validate_name};
+use crate::app_config::DbConnConfig;
 use crate::common::PathConfigArgs;
 use anyhow::{Context, bail};
 use clap::{Args, Subcommand};

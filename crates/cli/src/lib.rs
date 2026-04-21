@@ -1,3 +1,4 @@
+mod app_config;
 mod build;
 mod common;
 mod config;
