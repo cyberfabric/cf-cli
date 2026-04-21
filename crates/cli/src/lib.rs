@@ -1,6 +1,7 @@
 mod build;
 mod common;
 mod config;
+mod deploy;
 mod docs;
 mod init;
 mod lint;
@@ -23,6 +24,7 @@ pub enum Commands {
     Init(init::InitArgs),
     Mod(r#mod::ModArgs),
     Config(Box<config::ConfigArgs>),
+    Deploy(deploy::DeployArgs),
     Docs(docs::DocsArgs),
     Lint(lint::LintArgs),
     Test(test::TestArgs),
@@ -37,6 +39,7 @@ impl Cli {
             Commands::Init(init) => init.run(),
             Commands::Mod(r#mod) => r#mod.run(),
             Commands::Config(config) => config.run(),
+            Commands::Deploy(deploy) => deploy.run(),
             Commands::Docs(docs) => docs.run(),
             Commands::Lint(lint) => lint.run(),
             Commands::Test(test) => test.run(),

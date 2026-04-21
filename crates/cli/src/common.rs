@@ -87,6 +87,17 @@ impl Display for Registry {
     }
 }
 
+pub fn resolve_workspace_config_and_name(
+    path_config: &PathConfigArgs,
+    override_name: Option<&str>,
+) -> anyhow::Result<(PathBuf, PathBuf, String)> {
+    let path = workspace_root()?;
+    let config_path = path_config.resolve_config()?;
+    let project_name = resolve_generated_project_name(&config_path, override_name)?;
+
+    Ok((path, config_path, project_name))
+}
+
 impl BuildRunArgs {
     pub fn resolve_config_and_name(&self) -> anyhow::Result<(PathBuf, String)> {
         let config_path = self.path_config.resolve_config()?;
@@ -242,6 +253,15 @@ pub fn generate_server_structure(
     project_name: &str,
     current_dependencies: &CargoTomlDependencies,
 ) -> anyhow::Result<()> {
+    let output_root = workspace_root()?;
+    generate_server_structure_at(&output_root, project_name, current_dependencies)
+}
+
+pub fn generate_server_structure_at(
+    output_root: &Path,
+    project_name: &str,
+    current_dependencies: &CargoTomlDependencies,
+) -> anyhow::Result<()> {
     let mut dependencies = current_dependencies.clone();
     dependencies.extend(create_required_deps()?);
     let cargo_toml = CargoToml {
@@ -257,9 +277,14 @@ pub fn generate_server_structure(
         toml::to_string(&cargo_toml).context("something went wrong when transforming to toml")?;
     let main_rs = prepare_cargo_server_main(current_dependencies);
 
-    create_file_structure(project_name, "Cargo.toml", &cargo_toml_str)?;
-    create_file_structure(project_name, ".cargo/config.toml", CARGO_CONFIG_TOML)?;
-    create_file_structure(project_name, "src/main.rs", &main_rs)?;
+    create_file_structure_at(output_root, project_name, "Cargo.toml", &cargo_toml_str)?;
+    create_file_structure_at(
+        output_root,
+        project_name,
+        ".cargo/config.toml",
+        CARGO_CONFIG_TOML,
+    )?;
+    create_file_structure_at(output_root, project_name, "src/main.rs", &main_rs)?;
 
     Ok(())
 }
@@ -268,13 +293,17 @@ pub fn generated_project_dir(project_name: &str) -> anyhow::Result<PathBuf> {
     Ok(workspace_root()?.join(BASE_PATH).join(project_name))
 }
 
-fn create_file_structure(
+fn create_file_structure_at(
+    output_root: &Path,
     project_name: &str,
     relative_path: &str,
     contents: &str,
 ) -> anyhow::Result<()> {
     use std::io::Write;
-    let path = generated_project_dir(project_name)?.join(relative_path);
+    let path = output_root
+        .join(BASE_PATH)
+        .join(project_name)
+        .join(relative_path);
     fs::create_dir_all(
         path.parent().context(
             "this should be unreachable, the parent for the file structure always exists",

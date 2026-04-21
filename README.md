@@ -105,6 +105,17 @@ Example manual run of the generated project:
 CF_CLI_CONFIG=/tmp/cf-demo/config/quickstart.yml cargo run --manifest-path /tmp/cf-demo/.cyberfabric/quickstart/Cargo.toml
 ```
 
+### Deployment bundle generation
+
+- `deploy --template docker` generates a Docker build bundle under `.cyberfabric/<name>/deploy/` using deploy assets
+  from `cf-template-rust`
+- the generated bundle includes a Dockerfile, `config.yml`, the generated `.cyberfabric/<name>`
+  server project, and the workspace members needed by local path dependencies
+- existing bundle directories under `.cyberfabric/` are replaced automatically, while existing custom
+  `--output-dir` paths require `--force`
+- copied workspace paths skip common local-only entries such as `.git`, `.vscode`, `target`, `.env*`, and swap files;
+  symlinked entries are rejected
+
 ### Source inspection
 
 - `docs` resolves Rust source for crates, modules, and items from the workspace, local cache, or `crates.io`
