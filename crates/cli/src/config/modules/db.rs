@@ -1,6 +1,6 @@
 use super::{load_config, resolve_modules_context, save_config, validate_module_name};
+use crate::app_config::{AppConfig, DbConnConfig, ModuleConfig};
 use crate::common::PathConfigArgs;
-use crate::config::app_config::{AppConfig, DbConnConfig, ModuleConfig};
 use crate::config::ensure_conn_payload;
 use anyhow::{Context, bail};
 use clap::{Args, Subcommand};

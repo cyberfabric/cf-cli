@@ -1,8 +1,9 @@
+use crate::app_config::AppConfig;
 use crate::config::validate_name;
 use anyhow::Context;
 use clap::{Args, ValueEnum};
 use module_parser::{
-    CargoToml, CargoTomlDependencies, CargoTomlDependency, Config, ConfigModuleMetadata, Package,
+    CargoToml, CargoTomlDependencies, CargoTomlDependency, ConfigModuleMetadata, Package,
     get_dependencies, get_module_name_from_crate,
 };
 use std::collections::{BTreeSet, HashMap};
@@ -55,6 +56,9 @@ pub struct BuildRunArgs {
     /// Use OpenTelemetry tracing
     #[arg(long)]
     pub otel: bool,
+    /// Enable FIPS mode
+    #[arg(long)]
+    pub fips: bool,
     /// Build/run in release mode
     #[arg(short = 'r', long)]
     pub release: bool,
@@ -128,6 +132,7 @@ pub fn cargo_command(
     path: &Path,
     config_path: &Path,
     otel: bool,
+    fips: bool,
     release: bool,
 ) -> Command {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
@@ -137,6 +142,9 @@ pub fn cargo_command(
     if otel {
         cmd.arg("-F").arg("otel");
     }
+    if fips {
+        cmd.arg("-F").arg("fips");
+    }
     if release {
         cmd.arg("-r");
     }
@@ -144,14 +152,17 @@ pub fn cargo_command(
     cmd
 }
 
-pub fn get_config(config_path: &Path) -> anyhow::Result<Config> {
+pub fn get_config(config_path: &Path) -> anyhow::Result<AppConfig> {
     let mut config = get_config_from_path(config_path)?;
     let mut members = get_module_name_from_crate()?;
 
     config.modules.iter_mut().for_each(|module| {
         if let Some(module_metadata) = members.remove(module.0.as_str()) {
-            let config_metadata = std::mem::take(&mut module.1.metadata);
-            module.1.metadata = merge_module_metadata(config_metadata, module_metadata.metadata);
+            let config_metadata = std::mem::take(&mut module.1.metadata).unwrap_or_default();
+            module.1.metadata = Some(merge_module_metadata(
+                config_metadata,
+                module_metadata.metadata,
+            ));
         } else {
             eprintln!(
                 "info: config module '{}' not found locally, retrieving it from the registry",
@@ -163,7 +174,7 @@ pub fn get_config(config_path: &Path) -> anyhow::Result<Config> {
     Ok(config)
 }
 
-fn get_config_from_path(path: &Path) -> anyhow::Result<Config> {
+fn get_config_from_path(path: &Path) -> anyhow::Result<AppConfig> {
     let config = fs::File::open(path).context("config not available")?;
     serde_saphyr::from_reader(config).context("config not valid")
 }
@@ -195,6 +206,7 @@ static FEATURES: LazyLock<HashMap<String, Vec<String>>> = LazyLock::new(|| {
     let mut res = HashMap::with_capacity(2);
     res.insert("default".to_owned(), vec![]);
     res.insert("otel".to_owned(), vec!["modkit/otel".to_owned()]);
+    res.insert("fips".to_owned(), vec!["modkit/fips".to_owned()]);
     res
 });
 
@@ -204,7 +216,6 @@ static CARGO_DEPS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
     res.insert("modkit".to_owned(), "modkit".to_owned()); // just in case there's a renamed
     res.insert("anyhow".to_owned(), "anyhow".to_owned());
     res.insert("tokio".to_owned(), "tokio".to_owned());
-    res.insert("tracing".to_owned(), "tracing".to_owned());
     res
 });
 
@@ -242,7 +253,14 @@ pub fn generate_server_structure(
     project_name: &str,
     current_dependencies: &CargoTomlDependencies,
 ) -> anyhow::Result<()> {
-    let mut dependencies = current_dependencies.clone();
+    let workspace = workspace_root()?
+        .to_str()
+        .context("workspace path is not valid UTF-8")?
+        .to_owned();
+    let mut dependencies: CargoTomlDependencies = current_dependencies
+        .iter()
+        .map(|(name, dep)| (name.clone(), make_absolute_paths_relative(dep, &workspace)))
+        .collect();
     dependencies.extend(create_required_deps()?);
     let cargo_toml = CargoToml {
         package: Package {
@@ -262,6 +280,44 @@ pub fn generate_server_structure(
     create_file_structure(project_name, "src/main.rs", &main_rs)?;
 
     Ok(())
+}
+
+// Transforms absolute paths into relative paths, ugly but works
+fn make_absolute_paths_relative(dep: &CargoTomlDependency, workspace: &str) -> CargoTomlDependency {
+    let mut dep = dep.clone();
+    if let Some(path) = &dep.path {
+        let workspace_path = Path::new(workspace);
+        let dependency_path = Path::new(path);
+        let stripped = if dependency_path.is_absolute() {
+            dependency_path
+                .strip_prefix(workspace_path)
+                .ok()
+                .map(Path::to_path_buf)
+                .or_else(|| {
+                    let workspace_path = workspace_path.canonicalize().ok()?;
+                    let dependency_path = dependency_path.canonicalize().ok()?;
+                    dependency_path
+                        .strip_prefix(&workspace_path)
+                        .ok()
+                        .map(Path::to_path_buf)
+                })
+        } else {
+            // Workspace-relative paths are written relative to the workspace
+            // root, so they need the same ../.. prefix as stripped absolute
+            // paths when rewritten into the generated project.
+            Some(dependency_path.to_path_buf())
+        };
+
+        if let Some(stripped) = stripped {
+            dep.path = Some(
+                Path::new("../..")
+                    .join(stripped)
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+    }
+    dep
 }
 
 pub fn generated_project_dir(project_name: &str) -> anyhow::Result<PathBuf> {
@@ -336,11 +392,51 @@ fn prepare_cargo_server_main(dependencies: &CargoTomlDependencies) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_module_metadata, prepare_cargo_server_main, resolve_generated_project_name};
+    use super::{
+        cargo_command, generate_server_structure, generated_project_dir,
+        make_absolute_paths_relative, merge_module_metadata, prepare_cargo_server_main,
+        resolve_generated_project_name,
+    };
     use module_parser::{
         Capability, CargoTomlDependencies, CargoTomlDependency, ConfigModuleMetadata,
+        test_utils::TempDirExt,
     };
+    use std::env;
     use std::path::Path;
+    use std::sync::{LazyLock, Mutex};
+    use tempfile::TempDir;
+
+    static CURRENT_DIR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    struct CwdRestoreGuard {
+        original_dir: std::path::PathBuf,
+    }
+
+    impl Drop for CwdRestoreGuard {
+        fn drop(&mut self) {
+            let _ = env::set_current_dir(&self.original_dir);
+        }
+    }
+
+    fn write_package(temp_dir: &TempDir, relative_path: &str, package_name: &str) {
+        temp_dir.write(
+            &format!("{relative_path}/Cargo.toml"),
+            &format!(
+                r#"[package]
+name = "{package_name}"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+"#
+            ),
+        );
+        temp_dir.write(
+            &format!("{relative_path}/src/lib.rs"),
+            "pub fn marker() {}\n",
+        );
+    }
 
     #[test]
     fn merge_module_metadata_preserves_config_overrides() {
@@ -405,5 +501,140 @@ mod tests {
         assert!(main_rs.contains("use api_db_handler as _;"));
         assert!(!main_rs.contains("use api-db-handler as _;"));
         assert!(!main_rs.contains("{{dependencies}}"));
+    }
+
+    #[test]
+    fn cargo_command_passes_selected_generated_project_features() {
+        let config_path = Path::new("/tmp/config.yml");
+        let cargo_dir = Path::new("/tmp/generated");
+
+        let command = cargo_command("run", cargo_dir, config_path, true, true, true);
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(args, vec!["run", "-F", "otel", "-F", "fips", "-r"]);
+        assert_eq!(command.get_current_dir(), Some(cargo_dir));
+    }
+
+    #[test]
+    fn make_absolute_paths_relative_rewrites_workspace_paths() {
+        let dependency = CargoTomlDependency {
+            path: Some("/tmp/workspace/crates/local-module".to_owned()),
+            ..Default::default()
+        };
+
+        let rewritten = make_absolute_paths_relative(&dependency, "/tmp/workspace");
+        let rewritten_path = Path::new(
+            rewritten
+                .path
+                .as_deref()
+                .expect("rewritten dependency should keep a path"),
+        );
+
+        assert!(!rewritten_path.is_absolute());
+        assert!(rewritten_path.is_relative());
+        assert_eq!(rewritten.path.as_deref(), Some("../../crates/local-module"));
+    }
+
+    #[test]
+    fn make_absolute_paths_relative_rewrites_workspace_relative_paths() {
+        let dependency = CargoTomlDependency {
+            path: Some("crates/local-module".to_owned()),
+            ..Default::default()
+        };
+
+        let rewritten = make_absolute_paths_relative(&dependency, "/tmp/workspace");
+
+        assert_eq!(rewritten.path.as_deref(), Some("../../crates/local-module"));
+    }
+
+    #[test]
+    fn generate_server_structure_writes_existing_relative_dependency_paths() {
+        let _guard = CURRENT_DIR_LOCK
+            .lock()
+            .expect("current-dir test lock should not be poisoned");
+        let _cwd_guard = CwdRestoreGuard {
+            original_dir: env::current_dir().expect("current dir should be available"),
+        };
+        let temp_dir = TempDir::new().expect("temp dir should be created");
+
+        write_package(&temp_dir, "crates/anyhow", "anyhow");
+        write_package(&temp_dir, "crates/tokio", "tokio");
+        write_package(&temp_dir, "crates/modkit", "cf-modkit");
+        write_package(&temp_dir, "crates/local-module", "local-module");
+        temp_dir.write(
+            "Cargo.toml",
+            r#"[workspace]
+members = [
+    "crates/anyhow",
+    "crates/tokio",
+    "crates/modkit",
+    "crates/local-module",
+]
+resolver = "3"
+"#,
+        );
+
+        let result = (|| -> anyhow::Result<()> {
+            env::set_current_dir(temp_dir.path())?;
+
+            let current_dependencies = CargoTomlDependencies::from([(
+                "local-module".to_owned(),
+                CargoTomlDependency {
+                    path: Some(
+                        temp_dir
+                            .path()
+                            .join("crates/local-module")
+                            .to_string_lossy()
+                            .into_owned(),
+                    ),
+                    ..Default::default()
+                },
+            )]);
+
+            generate_server_structure("generated", &current_dependencies)?;
+
+            let generated_dir = generated_project_dir("generated")?;
+            let generated_manifest = std::fs::read_to_string(generated_dir.join("Cargo.toml"))?;
+            let cargo_toml: toml::Value = toml::from_str(&generated_manifest)?;
+            let dependencies = cargo_toml
+                .get("dependencies")
+                .and_then(toml::Value::as_table)
+                .expect("generated Cargo.toml should contain dependencies");
+            let mut path_dependency_count = 0;
+
+            for (name, dependency) in dependencies {
+                let Some(path) = dependency
+                    .as_table()
+                    .and_then(|table| table.get("path"))
+                    .and_then(toml::Value::as_str)
+                else {
+                    continue;
+                };
+
+                path_dependency_count += 1;
+                let dependency_path = Path::new(path);
+                assert!(
+                    !dependency_path.is_absolute(),
+                    "dependency {name} path should not be absolute: {path}"
+                );
+                assert!(
+                    dependency_path.is_relative(),
+                    "dependency {name} path should be relative: {path}"
+                );
+                assert!(
+                    generated_dir.join(dependency_path).exists(),
+                    "dependency {name} path should exist: {path}"
+                );
+            }
+
+            assert!(path_dependency_count > 0);
+
+            Ok(())
+        })();
+
+        result.expect("generate_server_structure should rewrite dependency paths");
     }
 }

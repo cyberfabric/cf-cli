@@ -4,9 +4,8 @@ use std::path::Path;
 
 use anyhow::{Context, bail};
 
-use self::app_config::{AppConfig, DbConnConfig};
+use crate::app_config::{AppConfig, DbConnConfig};
 
-mod app_config;
 mod db;
 mod modules;
 

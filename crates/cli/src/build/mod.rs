@@ -21,6 +21,7 @@ impl BuildArgs {
             &cargo_dir,
             &config_path,
             self.build_run_args.otel,
+            self.build_run_args.fips,
             self.build_run_args.release,
         )
         .status()

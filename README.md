@@ -92,8 +92,9 @@ You need to provide the path to the configuration file with the `-c` flag. `-c c
 - `build` generates a runnable Cargo project under `.cyberfabric/<CONFIG_NAME>` and builds it based on the `-c`
   configuration
   provided.
-- `run` generates the same project and runs it. You can provide `-w` to enable watch mode and/or `--otel` to enable
-  OpenTelemetry.
+- `run` generates the same project and runs it. You can provide `-w` to enable watch mode, `--otel` to enable
+  OpenTelemetry, and `--fips` to enable the generated manifest's `fips` feature.
+- `build` and `run` both pass `--otel` and `--fips` through as Cargo features on the generated project manifest.
 
 The generated `src/main.rs` does not embed the config path. Instead, the generated server reads it from
 `CF_CLI_CONFIG` at runtime. The CLI sets that variable for `build` and `run`, but if you execute `.cyberfabric/<name>/`
@@ -111,14 +112,16 @@ CF_CLI_CONFIG=/tmp/cf-demo/config/quickstart.yml cargo run --manifest-path /tmp/
 
 ### Linting
 
+- `lint` defaults to running all available lint suites for the current or selected workspace
+- `lint --clippy` runs `cargo clippy --workspace --all-targets`
+- `lint --strict` is valid when Clippy is active and upgrades Clippy warnings to errors
 - `lint -p <PATH> --dylint` runs the embedded CyberFabric Dylint rules against the workspace rooted at the current or
   selected directory
+- Passing `--clippy` and/or `--dylint` disables the implicit default `--all` selection unless `--all` is also passed
 - `lint` uses `-p/--path` the same way as other workspace-aware commands: it changes the current working directory
   before resolving the target workspace
-- `lint --clippy` is currently parsed but not wired to invoke Clippy yet
 
-If the CLI is built without the `dylint-rules` feature, `lint --dylint` currently reaches its fallback
-`unimplemented!` path.
+If the CLI is built without the `dylint-rules` feature, `lint --dylint` returns an error.
 
 ### Tool bootstrap
 

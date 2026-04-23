@@ -1,4 +1,4 @@
-use crate::common;
+use crate::{app_config, common};
 use anyhow::{Context, bail};
 use notify::{RecursiveMode, Watcher};
 use std::collections::HashSet;
@@ -19,6 +19,7 @@ pub(super) struct RunLoop {
 }
 
 pub(super) static OTEL: AtomicBool = AtomicBool::new(false);
+pub(super) static FIPS: AtomicBool = AtomicBool::new(false);
 pub(super) static RELEASE: AtomicBool = AtomicBool::new(false);
 
 impl RunLoop {
@@ -111,7 +112,7 @@ impl RunLoop {
 
             if is_config_change || is_workspace_manifest_change {
                 match common::get_config(&self.config_path)
-                    .and_then(module_parser::Config::create_dependencies)
+                    .and_then(app_config::AppConfig::create_dependencies)
                 {
                     Ok(new_deps) => {
                         if new_deps != current_deps {
@@ -169,8 +170,9 @@ impl RunLoop {
 
 fn cargo_run(path: &Path, config_path: &Path) -> Command {
     let otel = OTEL.load(std::sync::atomic::Ordering::Relaxed);
+    let fips = FIPS.load(std::sync::atomic::Ordering::Relaxed);
     let release = RELEASE.load(std::sync::atomic::Ordering::Relaxed);
-    common::cargo_command("run", path, config_path, otel, release)
+    common::cargo_command("run", path, config_path, otel, fips, release)
 }
 
 fn cargo_run_loop(cargo_dir: &Path, config_path: &Path, signal_rx: &mpsc::Receiver<RunSignal>) {

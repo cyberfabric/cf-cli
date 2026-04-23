@@ -102,7 +102,7 @@ pub fn get_dependencies<S: std::hash::BuildHasher>(
             .map(|node| (node.id.clone(), node))
             .collect::<HashMap<_, _>>()
     });
-    let mut res = CargoTomlDependencies::with_capacity(deps.len());
+    let mut res = CargoTomlDependencies::new();
     for pkg in packages {
         if let Some(name) = deps.get(pkg.name.as_str()) {
             let features = resolve_nodes

@@ -1,6 +1,6 @@
 use super::{SYSTEM_REGISTRY_MODULES, SystemRegistryModule, load_config, resolve_modules_context};
+use crate::app_config::ModuleConfig;
 use crate::common::{PathConfigArgs, Registry};
-use crate::config::app_config::ModuleConfig;
 use anyhow::{Context, bail};
 use clap::Args;
 use flate2::read::GzDecoder;

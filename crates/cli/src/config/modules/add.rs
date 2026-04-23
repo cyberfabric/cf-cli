@@ -1,6 +1,6 @@
 use super::{load_config, resolve_modules_context, save_config, validate_module_name};
+use crate::app_config::AppConfig;
 use crate::common::PathConfigArgs;
-use crate::config::app_config::AppConfig;
 use anyhow::{Context, bail};
 use clap::Args;
 use module_parser::{ConfigModule, ConfigModuleMetadata, get_module_name_from_crate};
@@ -178,8 +178,8 @@ fn validate_required_metadata(
 #[cfg(test)]
 mod tests {
     use super::{AddArgs, build_required_metadata, upsert_module_config};
+    use crate::app_config::{AppConfig, ModuleConfig};
     use crate::common::PathConfigArgs;
-    use crate::config::app_config::{AppConfig, ModuleConfig};
     use module_parser::{Capability, ConfigModule, ConfigModuleMetadata};
     use std::path::PathBuf;
 
