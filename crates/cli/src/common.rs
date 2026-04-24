@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
 /// must always be present; if it is missing we return an error instead of
 /// silently falling back.
 pub fn cargo_cmd() -> anyhow::Result<Command> {
-    env::var("CARGO").context(
+    env::var_os("CARGO").context(
         "CARGO environment variable is not set — the CLI must be invoked as `cargo cyberfabric`",
     ).map(Command::new)
 }

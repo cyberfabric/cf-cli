@@ -682,7 +682,7 @@ Behavior:
 - **[explicit selection disables default all]** Passing `--fmt`, `--clippy`, and/or `--dylint` opts into just those requested lint suites unless
   `--all` is also provided
 - **[workspace formatting check]** `--fmt` runs `cargo fmt --check --all`
-- **[workspace Clippy]** Clippy runs as `cargo clippy --workspace --all-targets`
+- **[workspace Clippy]** Clippy runs as `cargo clippy --workspace --all-targets --all-features`. The `--all-features` flag ensures every feature-gated code path is checked. The workspace currently has no mutually exclusive features, so enabling all features simultaneously is safe.
 - **[strict scope]** `--strict` is rejected unless Clippy is active through `--clippy` or `--all`
 - **[workspace-scoped dylint]** Dylint resolves the workspace from the current working directory, so `-p/--path` is the
   way to lint another workspace without manually changing directories

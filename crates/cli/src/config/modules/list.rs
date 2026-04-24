@@ -72,7 +72,7 @@ impl ListArgs {
             println!("  (none)");
         } else {
             let mut local_entries: Vec<_> = local_modules.iter().collect();
-            local_entries.sort_by(|(left_name, _), (right_name, _)| left_name.cmp(right_name));
+            local_entries.sort_by_key(|(left_name, _)| *left_name);
             for (module_name, module) in local_entries {
                 let enabled_label = if enabled_modules.contains(module_name.as_str()) {
                     " (enabled in config)"
@@ -96,7 +96,7 @@ impl ListArgs {
             println!("  (none)");
         } else {
             let mut configured_entries: Vec<_> = config.modules.iter().collect();
-            configured_entries.sort_by(|(left_name, _), (right_name, _)| left_name.cmp(right_name));
+            configured_entries.sort_by_key(|(left_name, _)| *left_name);
             for (module_name, module) in configured_entries {
                 let location_label = if local_modules.contains_key(module_name.as_str()) {
                     " (local workspace)"

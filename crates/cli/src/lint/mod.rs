@@ -104,7 +104,7 @@ fn run_fmt() -> Result<()> {
 
 fn run_clippy(strict: bool) -> Result<()> {
     let mut cmd = cargo_cmd()?;
-    cmd.args(["clippy", "--workspace", "--all-targets"]);
+    cmd.args(["clippy", "--workspace", "--all-targets", "--all-features"]);
 
     // TODO Analyse the features that each crate has and try to test them against the feature set.
 

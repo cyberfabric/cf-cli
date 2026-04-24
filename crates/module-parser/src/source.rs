@@ -287,10 +287,8 @@ fn cfg_tokens_contain_test(tokens: proc_macro2::TokenStream) -> bool {
                     iter.next();
                 }
             }
-            proc_macro2::TokenTree::Group(group) => {
-                if cfg_tokens_contain_test(group.stream()) {
-                    return true;
-                }
+            proc_macro2::TokenTree::Group(group) if cfg_tokens_contain_test(group.stream()) => {
+                return true;
             }
             _ => {}
         }
