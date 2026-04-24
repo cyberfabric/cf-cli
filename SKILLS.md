@@ -665,7 +665,7 @@ Generate a Docker deployment bundle under `.cyberfabric/<name>/deploy/`.
 Synopsis:
 
 ```bash
-cyberfabric deploy --template docker -c <CONFIG> [-p <PATH>] [--name <NAME>] [--output-dir <PATH>] [--force] [--local-path <PATH>] [--git <URL>] [--subfolder <NAME>] [--branch <NAME>] [--build] [--tag <IMAGE:TAG>] [--push]
+cyberfabric deploy --template docker -c <CONFIG> [-p <PATH>] [--name <NAME>] [--output-dir <PATH>] [--force] [--local-path <PATH>] [--git <URL>] [--subfolder <NAME>] [--branch <NAME>] [--build] [--tag <IMAGE:TAG>] [--push] [--features <FEATURES>] [--docker-arg <KEY=VALUE>...]
 ```
 
 Arguments:
@@ -683,6 +683,8 @@ Arguments:
 - **[`--build`]** Build the Docker image from the generated bundle after generation
 - **[`--tag <IMAGE:TAG>`]** Tag the built image with the given reference (implies `--build`); defaults to `<name>:latest` when only `--build` is used
 - **[`--push`]** Push the tagged image to a registry (requires `--tag`)
+- **[`--features <FEATURES>`]** Cargo feature flags passed to the Docker build via the `CYBERFABRIC_FEATURES` build arg
+- **[`--docker-arg <KEY=VALUE>`]** Additional Docker build arguments; can be repeated to override Dockerfile defaults such as `BUILDER_IMG`, `RUNNER_IMG`
 
 Behavior:
 
@@ -691,10 +693,10 @@ Behavior:
 - **[copies workspace inputs]** Copies the workspace manifest, optional `Cargo.lock`, local workspace members, and dependency paths needed for Docker compilation
 - **[filters common junk entries]** Skips common local-only files and folders such as `.git`, `.vscode`, `target`, `.env*`, swap files, and Finder metadata when copying workspace paths into the bundle
 - **[rejects symlinked bundle inputs]** Fails fast if a copied workspace path contains a symlinked entry
-- **[copies config as `config.yml`]** Places the selected config file in the deploy bundle root as `config.yml`
-- **[renders from deploy templates]** Loads `Deploy/docker` templates from `cf-template-rust` and renders the `Dockerfile`
+- **[copies config as `config/<name>`]** Places the selected config file in the deploy bundle at `config/<name>`, where `<name>` is the project name
+- **[copies deploy templates]** Copies `Deploy/docker` assets (including the `Dockerfile`) from `cf-template-rust` into the bundle; the `Dockerfile` uses Docker `ARG` directives (`ARTIFACT_NAME`, `BUILDER_IMG`, `RUNNER_IMG`, `CYBERFABRIC_FEATURES`) instead of template rendering
 - **[protects custom output directories]** Replaces existing bundle directories under `.cyberfabric/` automatically, but requires `--force` before deleting an existing custom `--output-dir`
-- **[optional Docker lifecycle]** When `--build` or `--tag` is given, runs `docker build` after generating the bundle; `--push` additionally pushes the tagged image to a registry
+- **[optional Docker lifecycle]** When `--build` or `--tag` is given, runs `docker build --build-arg ARTIFACT_NAME=<name>` after generating the bundle; `--features` adds `CYBERFABRIC_FEATURES`; `--docker-arg` passes arbitrary build args (e.g. registry overrides); `--push` additionally pushes the tagged image
 
 Examples:
 
@@ -716,6 +718,14 @@ cyberfabric deploy --template docker -p /tmp/cf-demo -c /tmp/cf-demo/config/quic
 
 ```bash
 cyberfabric deploy --template docker -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --tag myapp:v1.0 --push
+```
+
+```bash
+cyberfabric deploy --template docker -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --tag myapp:v1.0 --features "otel,metrics"
+```
+
+```bash
+cyberfabric deploy --template docker -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --tag myapp:v1.0 --docker-arg BUILDER_IMG=artifactory.corp.example.com/team/builder-base:latest
 ```
 
 ### `lint`

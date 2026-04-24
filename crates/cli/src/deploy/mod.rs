@@ -4,6 +4,7 @@ mod template;
 
 use crate::common::{self, PathConfigArgs};
 use clap::{Args, ValueEnum};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use bundle::{
@@ -55,6 +56,12 @@ pub struct DeployArgs {
     /// Push the tagged image to a registry (requires --tag)
     #[arg(long, requires = "tag")]
     push: bool,
+    /// Cargo feature flags passed to the Docker build
+    #[arg(long)]
+    features: Option<String>,
+    /// Additional Docker build arguments (KEY=VALUE)
+    #[arg(long = "docker-arg", value_name = "KEY=VALUE")]
+    docker_args: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -84,16 +91,18 @@ impl DeployArgs {
             &workspace_root.join("Cargo.toml"),
             &output_dir.join("Cargo.toml"),
         )?;
-        let has_cargo_lock = copy_optional_file(
+        copy_optional_file(
             &workspace_root.join("Cargo.lock"),
             &output_dir.join("Cargo.lock"),
         )?;
-        copy_file(&config_path, &output_dir.join("config.yml"))?;
+        let config_bundle_path = Path::new("config").join(&project_name);
+        copy_file(&config_path, &output_dir.join(&config_bundle_path))?;
 
         let local_paths = collect_required_local_paths(&workspace_root, &dependencies)?;
         for relative_path in &local_paths {
             copy_relative_workspace_path(&workspace_root, &output_dir, relative_path)?;
         }
+        fs::create_dir_all(output_dir.join("modules")).ok();
 
         let rewritten_dependencies =
             rewrite_dependency_paths_for_bundle(&workspace_root, &dependencies)?;
@@ -102,8 +111,6 @@ impl DeployArgs {
         render_deploy_template(
             &output_dir,
             &project_name,
-            &local_paths,
-            has_cargo_lock,
             &TemplateSource {
                 local_path: self.local_path.as_deref(),
                 git: self.git.as_deref(),
@@ -119,7 +126,12 @@ impl DeployArgs {
         if should_build {
             let default_ref = format!("{project_name}:latest");
             let image_ref = self.tag.as_deref().unwrap_or(&default_ref);
-            docker_build(&output_dir, image_ref)?;
+            let mut build_args = vec![format!("ARTIFACT_NAME={project_name}")];
+            if let Some(features) = &self.features {
+                build_args.push(format!("CYBERFABRIC_FEATURES={features}"));
+            }
+            build_args.extend(self.docker_args.iter().cloned());
+            docker_build(&output_dir, image_ref, &build_args)?;
             if self.push {
                 docker_push(image_ref)?;
             }
@@ -200,8 +212,8 @@ path = "src/lib.rs"
             "[template]\nexclude = [\"**/.DS_Store\"]\n",
         );
         temp_dir.write(
-            "templates/Deploy/docker/Dockerfile.liquid",
-            "COPY {{ generated_project_dir }}/Cargo.toml {{ generated_project_dir }}/Cargo.toml\n{{ copy_local_paths }}\nCOPY config.yml /srv/config.yml\nCOPY --from=builder /workspace/target/release/{{ executable_name }} /srv/{{ executable_name }}\n",
+            "templates/Deploy/docker/Dockerfile",
+            "ARG ARTIFACT_NAME\nCOPY Cargo.toml Cargo.toml\nCOPY .cyberfabric/${ARTIFACT_NAME}/ .cyberfabric/${ARTIFACT_NAME}/\nCOPY modules/ modules/\nCOPY config/${ARTIFACT_NAME} config/${ARTIFACT_NAME}\nCMD [\"/srv/server\"]\n",
         );
 
         // chdir so workspace_root() resolves to the temp directory;
@@ -227,6 +239,8 @@ path = "src/lib.rs"
             build: false,
             tag: None,
             push: false,
+            features: None,
+            docker_args: vec![],
         };
 
         args.run().expect("deploy run");
@@ -238,7 +252,7 @@ path = "src/lib.rs"
         assert!(generated_cargo_toml.is_file());
         assert!(generated_main.is_file());
         assert!(dockerfile.is_file());
-        assert!(output_dir.join("config.yml").is_file());
+        assert!(output_dir.join("config/demo").is_file());
         assert!(output_dir.join("Cargo.toml").is_file());
         assert!(output_dir.join("Cargo.lock").is_file());
         assert!(output_dir.join("modules/demo-module/Cargo.toml").is_file());
@@ -252,11 +266,10 @@ path = "src/lib.rs"
         assert!(generated_main.contains("run_server(config)"));
 
         let dockerfile = fs::read_to_string(&dockerfile).expect("dockerfile");
-        assert!(
-            dockerfile.contains("COPY .cyberfabric/demo/Cargo.toml .cyberfabric/demo/Cargo.toml")
-        );
-        assert!(dockerfile.contains("COPY modules/demo-module modules/demo-module"));
-        assert!(dockerfile.contains("COPY config.yml /srv/config.yml"));
-        assert!(dockerfile.contains("/srv/demo"));
+        assert!(dockerfile.contains("ARG ARTIFACT_NAME"));
+        assert!(dockerfile.contains("COPY Cargo.toml Cargo.toml"));
+        assert!(dockerfile.contains("COPY modules/ modules/"));
+        assert!(dockerfile.contains("COPY config/${ARTIFACT_NAME} config/${ARTIFACT_NAME}"));
+        assert!(dockerfile.contains("CMD [\"/srv/server\"]"));
     }
 }

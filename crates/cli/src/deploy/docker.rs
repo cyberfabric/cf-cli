@@ -17,10 +17,20 @@ fn run_docker(args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn docker_build(bundle_dir: &Path, image_ref: &str) -> anyhow::Result<()> {
+pub(super) fn docker_build(
+    bundle_dir: &Path,
+    image_ref: &str,
+    build_args: &[String],
+) -> anyhow::Result<()> {
     println!("Building Docker image {image_ref}…");
     let bundle = bundle_dir.display().to_string();
-    run_docker(&["build", "-t", image_ref, &bundle])
+    let mut args = vec!["build", "-t", image_ref];
+    for arg in build_args {
+        args.push("--build-arg");
+        args.push(arg);
+    }
+    args.push(&bundle);
+    run_docker(&args)
 }
 
 pub(super) fn docker_push(image_ref: &str) -> anyhow::Result<()> {
