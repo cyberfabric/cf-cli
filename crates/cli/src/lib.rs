@@ -2,6 +2,7 @@ mod app_config;
 mod build;
 mod common;
 mod config;
+mod deploy;
 mod docs;
 mod init;
 mod lint;
@@ -39,6 +40,8 @@ pub enum Commands {
     Run(run::RunArgs),
     /// Same as run but stops at the build step
     Build(build::BuildArgs),
+    /// Build a Docker image for the generated or provided server manifest
+    Deploy(deploy::DeployArgs),
 }
 
 impl Cli {
@@ -53,6 +56,7 @@ impl Cli {
             Commands::Tools(tools) => tools.run(),
             Commands::Run(run) => run.run(),
             Commands::Build(build) => build.run(),
+            Commands::Deploy(deploy) => deploy.run(),
         }
     }
 }

@@ -366,7 +366,7 @@ fn remove_from_file_structure(project_name: &str, relative_path: &str) -> anyhow
     Ok(())
 }
 
-fn resolve_generated_project_name(
+pub fn resolve_generated_project_name(
     config_path: &Path,
     override_name: Option<&str>,
 ) -> anyhow::Result<String> {

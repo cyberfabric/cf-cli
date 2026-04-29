@@ -84,6 +84,8 @@ You need to provide the path to the configuration file with the `-c` flag. `-c c
   provided.
 - `run` generates the same project and runs it. You can provide `-w` to enable watch mode, `--otel` to enable
   OpenTelemetry, and `--fips` to enable the generated manifest's `fips` feature.
+- `deploy` builds a Docker image with the workspace `Dockerfile`. By default it generates the same server project from
+  `-c`; pass `--manifest <Cargo.toml>` to build an existing manifest instead.
 - `build` and `run` both pass `--otel` and `--fips` through as Cargo features on the generated project manifest.
 
 The generated `src/main.rs` does not embed the config path. Instead, the generated server reads it from

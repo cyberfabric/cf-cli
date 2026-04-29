@@ -1,3 +1,10 @@
+---
+name: cyberfabric
+description: cli reference to help with the development of cyberfabric framework. It helps with the development of
+  the framework from its initialization, adding/removing modules, modifying configuration files, build and/or run project
+  and deploy them.
+---
+
 # CyberFabric CLI Skills Guide
 
 This document summarizes the CLI implemented under `crates/cli/src`.
@@ -7,7 +14,6 @@ It focuses on:
 - **[arguments]** The supported flags and positional arguments
 - **[purpose]** What each command is meant to do
 - **[examples]** Realistic usage patterns
-- **[status]** Which commands are implemented vs currently placeholders
 
 ## Invocation Forms
 
@@ -21,11 +27,16 @@ Example:
 cargo cyberfabric init /tmp/my-app
 ```
 
-For local development in this repo:
+## Objective
 
-```bash
-cargo run -p cli -- init /tmp/my-app
-```
+This CLI is a tool for automating cyberfabric development, a Rust framework. You can get more information about it in:
+
+- CyberFabric repository main: https://github.com/cyberfabric/cyberfabric-core
+- Modkit libraries(the ones that leverage this CLI tool) are located
+  in https://github.com/cyberfabric/cyberfabric-core/tree/main/libs
+- More documentation of the project will be located in https://github.com/cyberfabric/cyberfabric-core/tree/main/docs
+
+Clone(shallow) the repo to .cyberfabric folder (create it if it doesn't exist), and use it as a reference.
 
 ## Command Tree
 
@@ -52,17 +63,18 @@ cargo cyberfabric
 ├── test
 ├── tools
 ├── run
-└── build
+├── build
+└── deploy
 ```
 
 ## Shared Argument Patterns
 
-- **[`-p, --path <PATH>`]** Optional workspace path. When provided to `config ...`, `build`, `run`, and `lint`, the CLI
-  immediately changes the current working directory to this directory. Relative config paths, generated project
-  locations, and workspace-scoped lint resolution then resolve from that directory. When omitted, the current working
-  directory is left unchanged.
-- **[`-c, --config <PATH>`]** Config file path. This is required for `config ...`, `build`, and `run` commands because
-  there is no default. For `build` and `run`, the CLI forwards this path to the generated server through the
+- **[`-p, --path <PATH>`]** Optional workspace path. When provided to `config ...`, `build`, `run`, `deploy`, and
+  `lint`, the CLI immediately changes the current working directory to this directory. Relative config paths, generated
+  project locations, and workspace-scoped lint resolution then resolve from that directory. When omitted, the current
+  working directory is left unchanged.
+- **[`-c, --config <PATH>`]** Config file path. This is required for `config ...`, `build`, `run`, and `deploy` commands
+  because there is no default. For `build` and `run`, the CLI forwards this path to the generated server through the
   `CF_CLI_CONFIG` environment variable.
 - **[`--name <NAME>`]** For `build` and `run`, overrides the generated server project and binary name that would
   otherwise default to the config filename stem.
@@ -77,7 +89,7 @@ From the current implementation, the CLI is mainly for:
 - **[workspace scaffolding]** Initialize a CyberFabric workspace and add module templates
 - **[config management]** Enable modules and patch YAML config sections
 - **[server generation]** Generate a runnable Cargo project under `.cyberfabric/<name>/`
-- **[build/run]** Build or run that generated server
+- **[build/run/deploy]** Build, run, or package that generated server as a Docker image
 - **[source inspection]** Resolve Rust source for crates/items through workspace metadata or crates.io
 - **[tool bootstrap]** Install or upgrade `rustup`, `cargofmt`, and `clippy`
 
@@ -90,13 +102,14 @@ Initialize a new project from the default CyberFabric template repo or a local t
 Synopsis:
 
 ```bash
-cargo cyberfabric init <path> [--verbose] [--local-path <PATH>] [--git <URL>] [--subfolder <NAME>] [--branch <NAME>]
+cargo cyberfabric init <path> [--verbose] [--name <NAME>] [--local-path <PATH>] [--git <URL>] [--subfolder <NAME>] [--branch <NAME>]
 ```
 
 Arguments:
 
 - **[`<path>`]** Target directory to initialize
 - **[`-v, --verbose`]** Verbose output from `cargo-generate`
+- **[`-n, --name <NAME>`]** Override the generated project name; inferred from the final path segment by default
 - **[`--local-path <PATH>`]** Use a local template directory instead of Git
 - **[`--git <URL>`]** Template Git URL, defaults to `https://github.com/cyberfabric/cf-template-rust`
 - **[`--subfolder <NAME>`]** Template subfolder, defaults to `Init`
@@ -106,7 +119,8 @@ Behavior:
 
 - **[creates target directory]** If it does not exist
 - **[fails on file path]** Errors if `<path>` already exists and is not a directory
-- **[uses directory name as project name]** The final path segment becomes the generated project name
+- **[uses directory name as project name]** The final path segment becomes the generated project name unless `--name` is
+  provided
 - **[forces git init]** Template generation runs with Git initialization enabled
 
 Examples:
@@ -449,7 +463,7 @@ Arguments:
 - **[`--clean`]** Remove the docs cache for the selected registry before resolving
 - **[`[<query>]`]** Rust path to resolve, starting with the package name; omitted only when `--clean` is used by itself
 
-Supported query examples from the implementation:
+Supported query examples:
 
 - **[`cf-modkit`]**
 - **[`tokio::sync`]**
@@ -481,15 +495,19 @@ cargo cyberfabric docs -p /tmp/cf-demo cf-modkit
 ```
 
 ```bash
-cargo cyberfabric docs -p /tmp/cf-demo --verbose tokio::sync
+cargo cyberfabric docs cf-modkit::module
 ```
 
 ```bash
-cargo cyberfabric docs -p /tmp/cf-demo --libs cf-modkit
+cargo cyberfabric docs --verbose tokio::sync
 ```
 
 ```bash
-cargo cyberfabric docs --registry crates.io --version 1.0.217 serde::de::Deserialize
+cargo cyberfabric docs --libs cf-modkit
+```
+
+```bash
+cargo cyberfabric docs --version 1.0.217 serde::de::Deserialize
 ```
 
 ```bash
@@ -656,6 +674,59 @@ cargo cyberfabric build -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --
 cargo cyberfabric build -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --name demo-server
 ```
 
+### `deploy`
+
+Generate a server project under `.cyberfabric/<name>/` and build a Docker image with the workspace `Dockerfile`.
+
+Synopsis:
+
+```bash
+cargo cyberfabric deploy -c <CONFIG> [-p <PATH>] [--manifest <Cargo.toml>] [--debug] [--dockerfile] [--args <KEY=VALUE>]...
+```
+
+Arguments:
+
+- **[`-c, --config <CONFIG>`]** Required config file path; copied into the image and used as the runtime
+  `CF_CLI_CONFIG` target
+- **[`-p, --path <PATH>`]** Optional workspace directory
+- **[`-m, --manifest <Cargo.toml>`]** Optional Cargo manifest to build instead of generating `.cyberfabric/<name>/`;
+  the path must point to a file named `Cargo.toml`
+- **[`--debug`]** Docker build mode; defaults to release mode. Use this flag to build in debug mode.
+- **[`--dockerfile <Dockerfile>`]** Dockerfile path to use instead of the default(Dockerfile from cwd)
+- **[`--args <KEY=VALUE>`]** Dockerfile `ARG` override passed as `docker build --build-arg`; repeat for multiple
+  overrides
+
+Behavior:
+
+- **[generates by default]** Without `--manifest`, recreates the generated server project from the config, matching
+  `build` and `run`
+- **[manifest override]** With `--manifest`, does not generate `.cyberfabric/<name>/`; Docker builds the provided
+  manifest instead and uses its `package.name` as the artifact name
+- **[Dockerfile bootstrap]** If `Dockerfile` is missing from the selected workspace root, writes the shared CLI
+  Dockerfile there before running Docker
+- **[build context requirement]** The config file and selected manifest must be inside the workspace root because Docker
+  can only copy files from the build context
+- **[Docker args]** The CLI provides `BUILDER_MANIFEST`, `BUILD_MODE`, `ARTIFACT_NAME`, `LOCAL_CONFIG_PATH`, and
+  `CONFIG_EXT`; repeated `--args` values are appended afterward so they can override Dockerfile arguments
+
+Examples:
+
+```bash
+cargo cyberfabric deploy -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
+```
+
+```bash
+cargo cyberfabric deploy -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --debug
+```
+
+```bash
+cargo cyberfabric deploy -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --manifest /tmp/cf-demo/Cargo.toml
+```
+
+```bash
+cargo cyberfabric deploy -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --args BUILDER_FLAGS="--features metrics"
+```
+
 ### `lint`
 
 Run workspace linting helpers from the selected workspace directory.
@@ -669,7 +740,8 @@ cargo cyberfabric lint [-p <PATH>] [--all] [--fmt] [--clippy] [--strict] [--dyli
 Arguments:
 
 - **[`-p, --path <PATH>`]** Optional workspace directory; changes the current working directory while Clap parses it
-- **[`--all`]** Runs the default lint suites; this is also the default when neither `--fmt`, `--clippy`, nor `--dylint` is passed
+- **[`--all`]** Runs the default lint suites; this is also the default when neither `--fmt`, `--clippy`, nor `--dylint`
+  is passed
 - **[`--fmt`]** Runs `cargo fmt --check --all`; if passed by itself, it disables the default implicit `--all`
 - **[`--clippy`]** Runs workspace Clippy checks; if passed by itself, it disables the default implicit `--all`
 - **[`--strict`]** Turns Clippy warnings into errors; valid only when Clippy is selected explicitly or through `--all`
@@ -679,10 +751,12 @@ Behavior:
 
 - **[path activation]** If `-p/--path` is provided, it changes the current working directory
 - **[default lint selection]** With no explicit lint-selection flags, `lint` behaves as if `--all` was enabled
-- **[explicit selection disables default all]** Passing `--fmt`, `--clippy`, and/or `--dylint` opts into just those requested lint suites unless
-  `--all` is also provided
+- **[explicit selection disables default all]** Passing `--fmt`, `--clippy`, and/or `--dylint` opts into just those
+  requested lint suites unless `--all` is also provided
 - **[workspace formatting check]** `--fmt` runs `cargo fmt --check --all`
-- **[workspace Clippy]** Clippy runs as `cargo clippy --workspace --all-targets --all-features`. The `--all-features` flag ensures every feature-gated code path is checked. The workspace currently has no mutually exclusive features, so enabling all features simultaneously is safe.
+- **[workspace Clippy]** Clippy runs as `cargo clippy --workspace --all-targets --all-features`. The `--all-features`
+  flag ensures every feature-gated code path is checked. The workspace currently has no mutually exclusive features, so
+  enabling all features simultaneously is safe.
 - **[strict scope]** `--strict` is rejected unless Clippy is active through `--clippy` or `--all`
 - **[workspace-scoped dylint]** Dylint resolves the workspace from the current working directory, so `-p/--path` is the
   way to lint another workspace without manually changing directories
@@ -760,7 +834,7 @@ cargo cyberfabric docs --verbose tokio::sync
 
 ## Important Caveats
 
-- **[`-c/--config` is mandatory]** For `config ...`, `build`, and `run`
+- **[`-c/--config` is mandatory]** For `config ...`, `build`, `run`, and `deploy`
 - **[generated servers expect `CF_CLI_CONFIG`]** `cargo cyberfabric run` sets it for you, but manual execution of
   `.cyberfabric/<name>/` or its compiled binary must provide it explicitly
 - **[`lint --dylint` needs the feature build]** Without the `dylint-rules` feature enabled, it currently reaches
@@ -776,7 +850,7 @@ cargo cyberfabric docs --verbose tokio::sync
 ## Quick Reference
 
 ```bash
-cargo cyberfabric init <path>
+cargo cyberfabric init <path> [--name <name>]
 cargo cyberfabric mod add <background-worker|api-db-handler|rest-gateway> [-p <workspace>]
 
 cargo cyberfabric config mod list [-p <workspace>] -c <config>
@@ -795,3 +869,4 @@ cargo cyberfabric lint [-p <workspace>] [--all] [--clippy] [--strict] [--dylint]
 cargo cyberfabric tools --all
 cargo cyberfabric run [-p <workspace>] -c <config> [--name <name>] [--watch]
 cargo cyberfabric build [-p <workspace>] -c <config> [--name <name>]
+cargo cyberfabric deploy [-p <workspace>] -c <config> [--manifest <Cargo.toml>] [--args <KEY=VALUE>]...
