@@ -3,8 +3,8 @@ use cargo_generate::{GenerateArgs, TemplatePath, generate};
 use clap::Args;
 use std::path::PathBuf;
 
-/// Content of SKILLS.md embedded at compile time
-const SKILLS_MD_CONTENT: &str = include_str!("../../../../SKILL.md");
+/// Content of SKILL.md embedded at compile time
+const SKILL_MD_CONTENT: &str = include_str!("../../../../SKILL.md");
 
 /// Content of Dockerfile embedded at compile time
 const DOCKERFILE_CONTENT: &str = include_str!("../../shared/Dockerfile");
@@ -94,8 +94,8 @@ impl InitArgs {
             .context("failed to create .agents/skills/cyberfabric/ directory")?;
         let skills_md_path = agents_skills_dir.join("SKILL.md");
         if !skills_md_path.exists() || self.r#override {
-            std::fs::write(&skills_md_path, SKILLS_MD_CONTENT)
-                .context("failed to write SKILLS.md to .agents/skills/cyberfabric/")?;
+            std::fs::write(&skills_md_path, SKILL_MD_CONTENT)
+                .context("failed to write SKILL.md to .agents/skills/cyberfabric/")?;
         }
 
         // Dockerfile

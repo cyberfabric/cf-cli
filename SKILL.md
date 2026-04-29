@@ -681,7 +681,7 @@ Generate a server project under `.cyberfabric/<name>/` and build a Docker image 
 Synopsis:
 
 ```bash
-cargo cyberfabric deploy -c <CONFIG> [-p <PATH>] [--manifest <Cargo.toml>] [--release[=true|false]] [--args <KEY=VALUE>]...
+cargo cyberfabric deploy -c <CONFIG> [-p <PATH>] [--manifest <Cargo.toml>] [--debug] [--dockerfile] [--args <KEY=VALUE>]...
 ```
 
 Arguments:
@@ -691,8 +691,8 @@ Arguments:
 - **[`-p, --path <PATH>`]** Optional workspace directory
 - **[`-m, --manifest <Cargo.toml>`]** Optional Cargo manifest to build instead of generating `.cyberfabric/<name>/`;
   the path must point to a file named `Cargo.toml`
-- **[`-r, --release[=true|false]`]** Docker build mode; defaults to release mode. Use `--release=false` to build debug
-  mode.
+- **[`--debug`]** Docker build mode; defaults to release mode. Use this flag to build in debug mode.
+- **[`--dockerfile <Dockerfile>`]** Dockerfile path to use instead of the default(Dockerfile from cwd)
 - **[`--args <KEY=VALUE>`]** Dockerfile `ARG` override passed as `docker build --build-arg`; repeat for multiple
   overrides
 
@@ -716,7 +716,7 @@ cargo cyberfabric deploy -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml
 ```
 
 ```bash
-cargo cyberfabric deploy -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --release=false
+cargo cyberfabric deploy -p /tmp/cf-demo -c /tmp/cf-demo/config/quickstart.yml --debug
 ```
 
 ```bash

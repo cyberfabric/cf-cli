@@ -76,10 +76,14 @@ impl DeployArgs {
         if let Some(tag) = &self.tag {
             command.arg("--tag").arg(tag);
         } else {
-            command.arg("--tag").arg("cyberfabric:1.0.0");
+            let default_tag = format!("cyberfabric:{}", env!("CARGO_PKG_VERSION"));
+            command.arg("--tag").arg(default_tag);
         }
         if let Some(dockerfile) = &self.dockerfile {
-            command.arg("--file").arg(dockerfile);
+            let canonical_dockerfile = dockerfile
+                .canonicalize()
+                .with_context(|| format!("dockerfile doesn't exists: {}", dockerfile.display()))?;
+            command.arg("--file").arg(&canonical_dockerfile);
         }
 
         command.arg(".");
